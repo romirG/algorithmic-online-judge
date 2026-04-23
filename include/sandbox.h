@@ -1,32 +1,21 @@
 /*
- * sandbox.h - Execution Sandbox Interface
- * Algorithmic Online Judge
- *
- * Provides sandboxed compilation and execution of C++ submissions
- * using fork(), exec(), pipe(), setrlimit(), and dup2().
+ * sandbox.h - Execution Sandbox Interface (v2)
  */
 
 #ifndef SANDBOX_H
 #define SANDBOX_H
 
 /*
- * evaluate_submission() - Compiles and runs a C++ source string
- *                         inside a sandboxed child process.
+ * evaluate_submission()
  *
- * Pipeline:
- *   1. Writes source_code to a temporary file (temp.cpp).
- *   2. fork()+execlp() to compile with g++.
- *   3. pipe()+fork()+execlp() to run the binary (a.out).
- *   4. setrlimit(RLIMIT_CPU, 2s) in the execution child.
- *   5. dup2() redirects child's stdout into the pipe.
- *   6. Parent reads output and compares to expected answer.
+ * Compiles and runs source_code for the given problem_id.
+ * Reads test input from  data/testcases/<problem_id>/input.txt
+ * Reads expected output from data/testcases/<problem_id>/expected.txt
  *
- * Parameters:
- *   source_code - Null-terminated C++ source string.
+ * Uses: fork(), execlp(), pipe() x2, dup2(), setrlimit(), waitpid()
  *
- * Returns: 1 if output matches expected answer (Accepted),
- *          0 otherwise (Wrong Answer / Compilation Error / TLE).
+ * Returns: VERDICT_AC (1), VERDICT_WA (0), VERDICT_CE (-1), VERDICT_TLE (-2)
  */
-int evaluate_submission(const char *source_code);
+int evaluate_submission(const char *source_code, int problem_id);
 
 #endif /* SANDBOX_H */

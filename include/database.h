@@ -1,9 +1,6 @@
 /*
  * database.h - Core Data Structures & Macros
- * Algorithmic Online Judge
- *
- * Defines all shared structures for Users, Scores,
- * Client-Server protocol messages, and file paths.
+ * Algorithmic Online Judge (v2 — Extended Feature Set)
  */
 
 #ifndef DATABASE_H
@@ -14,29 +11,41 @@
 #define SERVER_IP       "127.0.0.1"
 
 /* ─── Data File Paths ─── */
-#define DATA_DIR        "data"
-#define USERS_FILE      "data/users.dat"
-#define LEADERBOARD_FILE "data/leaderboard.dat"
+#define DATA_DIR          "data"
+#define USERS_FILE        "data/users.dat"
+#define LEADERBOARD_FILE  "data/leaderboard.dat"
+#define PROBLEMS_FILE     "data/problems.dat"
+#define TESTCASES_DIR     "data/testcases"
 
 /* ─── Action Codes (ClientRequest.action) ─── */
-#define ACTION_LOGIN        1
-#define ACTION_SUBMIT       2
-#define ACTION_LEADERBOARD  3
+#define ACTION_LOGIN            1
+#define ACTION_SUBMIT           2
+#define ACTION_LEADERBOARD      3
+#define ACTION_CREATE_PROBLEM   4
+#define ACTION_VIEW_PROBLEMS    5
+#define ACTION_UPLOAD_INPUT     6   /* Upload input.txt for a problem  */
+#define ACTION_UPLOAD_EXPECTED  7   /* Upload expected.txt             */
+#define ACTION_VIEW_LOGS        8
+#define ACTION_HALT_SYSTEM      9   /* IPC Signal trigger (SIGUSR1)    */
 
-/* ─── Role Codes (User.role) ─── */
-#define ROLE_ADMIN       1   /* Admin / Problem Setter */
-#define ROLE_CONTESTANT  2   /* Contestant             */
+/* ─── Role Codes ─── */
+#define ROLE_ADMIN       1
+#define ROLE_CONTESTANT  2
 
-/* ─── Status Codes (ServerResponse.status) ─── */
+/* ─── Status / Verdict Codes ─── */
 #define STATUS_OK        1
 #define STATUS_FAIL     -1
+#define VERDICT_AC       1   /* Accepted              */
+#define VERDICT_WA       0   /* Wrong Answer           */
+#define VERDICT_CE      -1   /* Compilation Error       */
+#define VERDICT_TLE     -2   /* Time Limit Exceeded     */
 
 /* ─── Data Structures ─── */
 
 typedef struct {
     int  id;
     char password[50];
-    int  role;           /* ROLE_ADMIN or ROLE_CONTESTANT */
+    int  role;
 } User;
 
 typedef struct {
@@ -45,38 +54,37 @@ typedef struct {
 } ScoreRecord;
 
 typedef struct {
-    int  action;         /* ACTION_LOGIN, ACTION_SUBMIT, ACTION_LEADERBOARD */
-    int  user_id;        /* Used during login & to track session */
-    char password[50];   /* Used during login */
-    char payload[4096];  /* Holds raw .cpp source code for submissions */
+    int  id;
+    char title[100];
+    char description[512];
+    int  active;             /* 1 = active, 0 = disabled */
+} Problem;
+
+typedef struct {
+    int  action;
+    int  user_id;
+    int  problem_id;         /* Which problem to submit to / manage */
+    char password[50];
+    char payload[4096];      /* Code, problem desc, test-case content */
 } ClientRequest;
 
 typedef struct {
-    int  status;         /* On login success: role value; else STATUS_OK/FAIL */
-    char message[256];
+    int  status;
+    char message[4096];      /* Large enough for problem lists & logs */
 } ServerResponse;
 
-/* ─── Function Prototypes (database.c) ─── */
+/* ─── Function Prototypes ─── */
 
-/*
- * init_database()  - Creates data/ directory, seeds users.dat
- *                    with default Admin & Contestant, and seeds
- *                    leaderboard.dat with initial zero-score records.
- */
 void init_database(void);
+int  update_leaderboard(int user_id);
+int  get_leaderboard(char *buffer, int buf_size);
 
-/*
- * update_leaderboard() - Increments solved_count for the given user.
- *                        Uses fcntl() F_WRLCK for exclusive write lock.
- *   Returns: 1 on success, 0 on failure.
- */
-int update_leaderboard(int user_id);
+/* Problem management (fcntl write/read locks on problems.dat) */
+int  create_problem(int id, const char *title, const char *description);
+int  get_problems(char *buffer, int buf_size);
 
-/*
- * get_leaderboard() - Reads all ScoreRecords and formats them
- *                     into a human-readable string in buffer.
- *   Returns: number of records read, or -1 on error.
- */
-int get_leaderboard(char *buffer, int buf_size);
+/* Test-case file management */
+int  save_testcase_file(int problem_id, const char *filename,
+                        const char *content);
 
 #endif /* DATABASE_H */

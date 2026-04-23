@@ -1,18 +1,19 @@
 /*
- * client.c - CLI Terminal Client
- * Algorithmic Online Judge
+ * client.c - CLI Terminal Client (v2 — Full Feature Set)
  *
- * OS Concepts Demonstrated:
- *   - TCP Sockets : socket(), connect(), send(), recv()
- *   - File I/O    : fopen/fread to load .cpp files from disk
+ * Admin Menu:
+ *   1. Create / Update Problem
+ *   2. Upload Test Cases (input.txt + expected.txt)
+ *   3. View System Logs
+ *   4. Emergency System Halt / Resume
+ *   5. View Leaderboard
+ *   6. Logout
  *
- * Flow:
- *   1. Connect to server at 127.0.0.1:8080
- *   2. Prompt user for login (id + password)
- *   3. On success, display role-based menu in a while(1) loop:
- *      - Admin:      View Leaderboard, Logout
- *      - Contestant: Submit Solution, View Leaderboard, Logout
- *   4. On logout, close socket and restart login prompt
+ * Contestant Menu:
+ *   1. View Available Problems
+ *   2. Submit Solution (.cpp / .c)
+ *   3. View Leaderboard
+ *   4. Logout
  */
 
 #include <stdio.h>
@@ -25,7 +26,7 @@
 
 #include "database.h"
 
-/* ─── Helper: flush stdin after scanf ─── */
+/* ─── Helper ─── */
 static void flush_stdin(void)
 {
     int c;
@@ -33,11 +34,19 @@ static void flush_stdin(void)
         ;
 }
 
+/* ─── Read an entire local file into buf; returns bytes read ─── */
+static ssize_t read_local_file(const char *path, char *buf, size_t buf_size)
+{
+    FILE *fp = fopen(path, "r");
+    if (!fp) { perror("  Cannot open file"); return -1; }
+    size_t n = fread(buf, 1, buf_size - 1, fp);
+    buf[n] = '\0';
+    fclose(fp);
+    return (ssize_t)n;
+}
+
 /* ───────────────────────────────────────────────────────────
  * main()
- *
- * Outer loop: reconnects and re-authenticates on each logout.
- * Inner loop: menu-driven actions until user chooses logout.
  * ─────────────────────────────────────────────────────────── */
 int main(void)
 {
@@ -46,12 +55,9 @@ int main(void)
     printf("╚══════════════════════════════════════════╝\n\n");
 
     while (1) {
-        /* ── Step 1: Create socket and connect ── */
+        /* ── Connect ── */
         int sock = socket(AF_INET, SOCK_STREAM, 0);
-        if (sock < 0) {
-            perror("[Client] socket() failed");
-            exit(EXIT_FAILURE);
-        }
+        if (sock < 0) { perror("socket"); exit(EXIT_FAILURE); }
 
         struct sockaddr_in serv_addr;
         memset(&serv_addr, 0, sizeof(serv_addr));
@@ -61,7 +67,7 @@ int main(void)
 
         if (connect(sock, (struct sockaddr *)&serv_addr,
                     sizeof(serv_addr)) < 0) {
-            perror("[Client] connect() failed — is the server running?");
+            perror("[Client] connect failed — is the server running?");
             close(sock);
             printf("Retrying in 3 seconds...\n\n");
             sleep(3);
@@ -69,7 +75,7 @@ int main(void)
         }
         printf("[Client] Connected to %s:%d\n\n", SERVER_IP, PORT);
 
-        /* ── Step 2: Login ── */
+        /* ── Login ── */
         ClientRequest  req;
         ServerResponse res;
 
@@ -80,137 +86,223 @@ int main(void)
         printf("  User ID  : ");
         if (scanf("%d", &req.user_id) != 1) {
             if (feof(stdin)) { close(sock); goto done; }
-            printf("Invalid input.\n");
-            flush_stdin();
-            close(sock);
-            continue;
+            printf("Invalid input.\n"); flush_stdin();
+            close(sock); continue;
         }
         flush_stdin();
 
         printf("  Password : ");
         if (scanf("%49s", req.password) != 1) {
             if (feof(stdin)) { close(sock); goto done; }
-            printf("Invalid input.\n");
-            flush_stdin();
-            close(sock);
-            continue;
+            printf("Invalid input.\n"); flush_stdin();
+            close(sock); continue;
         }
         flush_stdin();
         printf("───────────────────────────────\n");
 
         send(sock, &req, sizeof(req), 0);
         recv(sock, &res, sizeof(res), 0);
-
         printf("\n  %s\n\n", res.message);
 
-        if (res.status == STATUS_FAIL) {
-            close(sock);
-            continue;   /* Back to login */
-        }
+        if (res.status == STATUS_FAIL) { close(sock); continue; }
 
         int role = res.status;
-
-        /* ── Step 3: Role-based Menu Loop ── */
         int running = 1;
+
         while (running) {
             memset(&req, 0, sizeof(req));
             memset(&res, 0, sizeof(res));
 
+            /* ═══════════════════════════════════════════
+             *  ADMIN MENU
+             * ═══════════════════════════════════════════ */
             if (role == ROLE_ADMIN) {
-                /* ─── Admin Menu ─── */
-                printf("┌─── Admin Menu ───────────────┐\n");
-                printf("│  1. View Leaderboard         │\n");
-                printf("│  2. Logout                   │\n");
-                printf("└──────────────────────────────┘\n");
+                printf("┌─── Admin / Problem Setter ───┐\n");
+                printf("│  1. Create / Update Problem   │\n");
+                printf("│  2. Upload Test Cases         │\n");
+                printf("│  3. View System Logs          │\n");
+                printf("│  4. Emergency Halt / Resume   │\n");
+                printf("│  5. View Leaderboard          │\n");
+                printf("│  6. Logout                    │\n");
+                printf("└───────────────────────────────┘\n");
                 printf("  Choice: ");
 
-                int choice;
-                if (scanf("%d", &choice) != 1) {
+                int ch;
+                if (scanf("%d", &ch) != 1) {
                     if (feof(stdin)) { running = 0; break; }
-                    printf("Invalid input.\n");
-                    flush_stdin();
-                    continue;
+                    printf("Invalid.\n"); flush_stdin(); continue;
                 }
                 flush_stdin();
 
-                switch (choice) {
-                case 1:
+                switch (ch) {
+
+                /* ── 1. Create / Update Problem ── */
+                case 1: {
+                    req.action = ACTION_CREATE_PROBLEM;
+                    printf("  Problem ID: ");
+                    scanf("%d", &req.problem_id); flush_stdin();
+
+                    char title[100], desc[512];
+                    printf("  Title: ");
+                    fgets(title, sizeof(title), stdin);
+                    title[strcspn(title, "\n")] = '\0';
+
+                    printf("  Description: ");
+                    fgets(desc, sizeof(desc), stdin);
+                    desc[strcspn(desc, "\n")] = '\0';
+
+                    /* Pack as "title\ndescription" in payload */
+                    snprintf(req.payload, sizeof(req.payload),
+                             "%s\n%s", title, desc);
+
+                    send(sock, &req, sizeof(req), 0);
+                    recv(sock, &res, sizeof(res), 0);
+                    printf("\n  %s\n\n", res.message);
+                    break;
+                }
+
+                /* ── 2. Upload Test Cases ── */
+                case 2: {
+                    printf("  Problem ID: ");
+                    int pid;
+                    scanf("%d", &pid); flush_stdin();
+
+                    /* Upload input.txt */
+                    char path[256];
+                    printf("  Path to input file (input.txt): ");
+                    scanf("%255s", path); flush_stdin();
+
+                    req.action = ACTION_UPLOAD_INPUT;
+                    req.problem_id = pid;
+                    if (read_local_file(path, req.payload,
+                                        sizeof(req.payload)) >= 0) {
+                        send(sock, &req, sizeof(req), 0);
+                        recv(sock, &res, sizeof(res), 0);
+                        printf("  %s\n", res.message);
+                    }
+
+                    /* Upload expected.txt */
+                    printf("  Path to expected output file (expected.txt): ");
+                    scanf("%255s", path); flush_stdin();
+
+                    memset(&req, 0, sizeof(req));
+                    req.action = ACTION_UPLOAD_EXPECTED;
+                    req.problem_id = pid;
+                    if (read_local_file(path, req.payload,
+                                        sizeof(req.payload)) >= 0) {
+                        send(sock, &req, sizeof(req), 0);
+                        recv(sock, &res, sizeof(res), 0);
+                        printf("  %s\n\n", res.message);
+                    }
+                    break;
+                }
+
+                /* ── 3. View System Logs ── */
+                case 3:
+                    req.action = ACTION_VIEW_LOGS;
+                    send(sock, &req, sizeof(req), 0);
+                    recv(sock, &res, sizeof(res), 0);
+                    printf("\n%s\n", res.message);
+                    break;
+
+                /* ── 4. Emergency Halt / Resume ── */
+                case 4:
+                    req.action = ACTION_HALT_SYSTEM;
+                    send(sock, &req, sizeof(req), 0);
+                    recv(sock, &res, sizeof(res), 0);
+                    printf("\n  ⚠  %s\n\n", res.message);
+                    break;
+
+                /* ── 5. View Leaderboard ── */
+                case 5:
                     req.action = ACTION_LEADERBOARD;
                     send(sock, &req, sizeof(req), 0);
                     recv(sock, &res, sizeof(res), 0);
                     printf("\n%s\n", res.message);
                     break;
-                case 2:
+
+                /* ── 6. Logout ── */
+                case 6:
                     running = 0;
                     break;
+
                 default:
                     printf("  Invalid choice.\n\n");
                     break;
                 }
 
+            /* ═══════════════════════════════════════════
+             *  CONTESTANT MENU
+             * ═══════════════════════════════════════════ */
             } else {
-                /* ─── Contestant Menu ─── */
                 printf("┌─── Contestant Menu ──────────┐\n");
-                printf("│  1. Submit Solution (.cpp)   │\n");
-                printf("│  2. View Leaderboard         │\n");
-                printf("│  3. Logout                   │\n");
-                printf("└──────────────────────────────┘\n");
+                printf("│  1. View Available Problems   │\n");
+                printf("│  2. Submit Solution           │\n");
+                printf("│  3. View Leaderboard          │\n");
+                printf("│  4. Logout                    │\n");
+                printf("└───────────────────────────────┘\n");
                 printf("  Choice: ");
 
-                int choice;
-                if (scanf("%d", &choice) != 1) {
+                int ch;
+                if (scanf("%d", &ch) != 1) {
                     if (feof(stdin)) { running = 0; break; }
-                    printf("Invalid input.\n");
-                    flush_stdin();
-                    continue;
+                    printf("Invalid.\n"); flush_stdin(); continue;
                 }
                 flush_stdin();
 
-                switch (choice) {
-                case 1: {
-                    /* Read a .cpp file from disk and send as payload */
+                switch (ch) {
+
+                /* ── 1. View Problems (F_RDLCK) ── */
+                case 1:
+                    req.action = ACTION_VIEW_PROBLEMS;
+                    send(sock, &req, sizeof(req), 0);
+                    recv(sock, &res, sizeof(res), 0);
+                    printf("\n%s\n", res.message);
+                    break;
+
+                /* ── 2. Submit Solution ── */
+                case 2: {
+                    printf("  Problem ID: ");
+                    scanf("%d", &req.problem_id); flush_stdin();
+
                     char filepath[256];
-                    printf("  Enter .cpp file path: ");
+                    printf("  Path to source file (.cpp/.c): ");
                     if (scanf("%255s", filepath) != 1) {
                         if (feof(stdin)) { running = 0; break; }
-                        printf("Invalid input.\n");
-                        flush_stdin();
-                        break;
+                        printf("Invalid.\n"); flush_stdin(); break;
                     }
                     flush_stdin();
 
-                    FILE *fp = fopen(filepath, "r");
-                    if (!fp) {
-                        perror("  Cannot open file");
-                        break;
-                    }
+                    ssize_t n = read_local_file(filepath, req.payload,
+                                                sizeof(req.payload));
+                    if (n < 0) break;
 
-                    req.action  = ACTION_SUBMIT;
-                    req.user_id = 0;  /* not needed post-login */
-                    size_t n = fread(req.payload, 1,
-                                     sizeof(req.payload) - 1, fp);
-                    req.payload[n] = '\0';
-                    fclose(fp);
-
-                    printf("  Submitting %zu bytes...\n", n);
+                    req.action = ACTION_SUBMIT;
+                    printf("  Submitting %zd bytes to Problem %d...\n",
+                           n, req.problem_id);
 
                     send(sock, &req, sizeof(req), 0);
                     recv(sock, &res, sizeof(res), 0);
 
-                    printf("\n  ╔═══════════════════════════╗\n");
+                    printf("\n  ╔════════════════════════════════════╗\n");
                     printf("  ║  %s\n", res.message);
-                    printf("  ╚═══════════════════════════╝\n\n");
+                    printf("  ╚════════════════════════════════════╝\n\n");
                     break;
                 }
-                case 2:
+
+                /* ── 3. View Leaderboard (F_RDLCK) ── */
+                case 3:
                     req.action = ACTION_LEADERBOARD;
                     send(sock, &req, sizeof(req), 0);
                     recv(sock, &res, sizeof(res), 0);
                     printf("\n%s\n", res.message);
                     break;
-                case 3:
+
+                /* ── 4. Logout ── */
+                case 4:
                     running = 0;
                     break;
+
                 default:
                     printf("  Invalid choice.\n\n");
                     break;
@@ -220,12 +312,9 @@ int main(void)
 
         printf("[Client] Logged out.\n\n");
         close(sock);
-
-        /* Exit if stdin is exhausted (piped/automated input) */
         if (feof(stdin)) break;
     }
 
 done:
-
     return 0;
 }
