@@ -79,6 +79,7 @@ int main(void)
         printf("──────────── LOGIN ────────────\n");
         printf("  User ID  : ");
         if (scanf("%d", &req.user_id) != 1) {
+            if (feof(stdin)) { close(sock); goto done; }
             printf("Invalid input.\n");
             flush_stdin();
             close(sock);
@@ -88,6 +89,7 @@ int main(void)
 
         printf("  Password : ");
         if (scanf("%49s", req.password) != 1) {
+            if (feof(stdin)) { close(sock); goto done; }
             printf("Invalid input.\n");
             flush_stdin();
             close(sock);
@@ -124,6 +126,7 @@ int main(void)
 
                 int choice;
                 if (scanf("%d", &choice) != 1) {
+                    if (feof(stdin)) { running = 0; break; }
                     printf("Invalid input.\n");
                     flush_stdin();
                     continue;
@@ -156,6 +159,7 @@ int main(void)
 
                 int choice;
                 if (scanf("%d", &choice) != 1) {
+                    if (feof(stdin)) { running = 0; break; }
                     printf("Invalid input.\n");
                     flush_stdin();
                     continue;
@@ -168,6 +172,7 @@ int main(void)
                     char filepath[256];
                     printf("  Enter .cpp file path: ");
                     if (scanf("%255s", filepath) != 1) {
+                        if (feof(stdin)) { running = 0; break; }
                         printf("Invalid input.\n");
                         flush_stdin();
                         break;
@@ -215,7 +220,12 @@ int main(void)
 
         printf("[Client] Logged out.\n\n");
         close(sock);
+
+        /* Exit if stdin is exhausted (piped/automated input) */
+        if (feof(stdin)) break;
     }
+
+done:
 
     return 0;
 }
