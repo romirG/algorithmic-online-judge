@@ -1,0 +1,9 @@
+# Build outputs
+init_db
+server
+client
+a.out
+temp.cpp
+
+# Runtime data
+data/
