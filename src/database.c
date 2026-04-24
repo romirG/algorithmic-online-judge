@@ -313,19 +313,48 @@ int get_leaderboard(char *buffer, int buf_size)
     }
     printf("[DB] READ lock acquired (leaderboard)\n");
 
-    int offset = 0, count = 0;
+
+    /* Read all records into array */
+    #define MAX_USERS 100
+    ScoreRecord records[MAX_USERS];
+    int count = 0;
     ScoreRecord rec;
 
-    offset += snprintf(buffer + offset, buf_size - offset,
-                       "=== LEADERBOARD ===\n");
-
-    while (read(fd, &rec, sizeof(ScoreRecord)) == sizeof(ScoreRecord)) {
-        offset += snprintf(buffer + offset, buf_size - offset,
-                           "  User %d : %d solved\n",
-                           rec.user_id, rec.solved_count);
-        count++;
-        if (offset >= buf_size - 1) break;
+    while (count < MAX_USERS &&
+           read(fd, &rec, sizeof(ScoreRecord)) == sizeof(ScoreRecord)) {
+        records[count++] = rec;
     }
+
+    /* Sort by solved_count descending (simple bubble sort) */
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = 0; j < count - 1 - i; j++) {
+            if (records[j].solved_count < records[j + 1].solved_count) {
+                ScoreRecord tmp = records[j];
+                records[j] = records[j + 1];
+                records[j + 1] = tmp;
+            }
+        }
+    }
+
+    /* Format ranked leaderboard */
+    int offset = 0;
+    offset += snprintf(buffer + offset, buf_size - offset,
+        "╔══════════════════════════════════╗\n"
+        "║         LEADERBOARD              ║\n"
+        "╠══════╦══════════╦════════════════╣\n"
+        "║ Rank ║ User ID  ║    Solved      ║\n"
+        "╠══════╬══════════╬════════════════╣\n");
+
+    for (int i = 0; i < count && offset < buf_size - 1; i++) {
+        offset += snprintf(buffer + offset, buf_size - offset,
+                           "║  #%-2d ║  User %-2d ║    %-3d         ║\n",
+                           i + 1, records[i].user_id,
+                           records[i].solved_count);
+    }
+
+    offset += snprintf(buffer + offset, buf_size - offset,
+        "╚══════╩══════════╩════════════════╝\n");
+    (void)offset;
 
     fl.l_type = F_UNLCK;
     fcntl(fd, F_SETLK, &fl);
