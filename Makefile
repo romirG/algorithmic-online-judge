@@ -44,5 +44,5 @@ client: $(SRC_DIR)/client.c
 # ─── Cleanup ─────────────────────────────────────────────
 
 clean:
-	rm -f init_db server client a.out temp.cpp
+	rm -f init_db server client a.out temp.cpp temp.c
 	rm -rf data/

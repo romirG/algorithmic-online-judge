@@ -65,6 +65,7 @@ typedef struct {
     int  user_id;
     int  problem_id;         /* Which problem to submit to / manage */
     char password[50];
+    char file_ext[10];       /* ".c" or ".cpp" — tells sandbox which compiler */
     char payload[4096];      /* Code, problem desc, test-case content */
 } ClientRequest;
 

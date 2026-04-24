@@ -26,7 +26,6 @@
 #include "sandbox.h"
 #include "database.h"   /* for TESTCASES_DIR, verdict macros */
 
-#define TEMP_SOURCE "temp.cpp"
 #define TEMP_BINARY "a.out"
 
 /* ── Helper: read entire file into buffer, return bytes read ── */
@@ -43,8 +42,10 @@ static ssize_t read_file(const char *path, char *buf, size_t buf_size)
 /* ───────────────────────────────────────────────────────────
  * evaluate_submission()
  *
- * 1. Write source_code → temp.cpp
- * 2. fork+execlp g++ → compile
+ * file_ext: ".c" → gcc compiler, ".cpp" → g++ compiler
+ *
+ * 1. Write source_code → temp.c or temp.cpp
+ * 2. fork+execlp gcc/g++ → compile
  * 3. Read input.txt + expected.txt for the problem
  * 4. pipe x2 + fork: feed input via stdin pipe,
  *    capture stdout via stdout pipe
@@ -53,19 +54,26 @@ static ssize_t read_file(const char *path, char *buf, size_t buf_size)
  *
  * Returns: VERDICT_AC, VERDICT_WA, VERDICT_CE, VERDICT_TLE
  * ─────────────────────────────────────────────────────────── */
-int evaluate_submission(const char *source_code, int problem_id)
+int evaluate_submission(const char *source_code, int problem_id,
+                        const char *file_ext)
 {
+    /* Determine compiler and temp filename from extension */
+    int is_c = (file_ext && strcmp(file_ext, ".c") == 0);
+    const char *temp_source = is_c ? "temp.c" : "temp.cpp";
+    const char *compiler    = is_c ? "gcc"     : "g++";
+
     /* ── Step 1: Write source to temp file ── */
-    FILE *fp = fopen(TEMP_SOURCE, "w");
+    FILE *fp = fopen(temp_source, "w");
     if (!fp) {
-        perror("[Sandbox] fopen temp.cpp");
+        perror("[Sandbox] fopen temp source");
         return VERDICT_CE;
     }
     fprintf(fp, "%s", source_code);
     fclose(fp);
-    printf("[Sandbox] Source written (%zu bytes)\n", strlen(source_code));
+    printf("[Sandbox] Source written to %s (%zu bytes, compiler=%s)\n",
+           temp_source, strlen(source_code), compiler);
 
-    /* ── Step 2: Compile with fork() + execlp("g++") ── */
+    /* ── Step 2: Compile with fork() + execlp(compiler) ── */
     pid_t compile_pid = fork();
     if (compile_pid < 0) {
         perror("[Sandbox] fork (compile)");
@@ -76,8 +84,8 @@ int evaluate_submission(const char *source_code, int problem_id)
         /* CHILD: compiler */
         int devnull = open("/dev/null", O_WRONLY);
         if (devnull >= 0) { dup2(devnull, STDERR_FILENO); close(devnull); }
-        execlp("g++", "g++", TEMP_SOURCE, "-o", TEMP_BINARY, (char *)NULL);
-        perror("[Sandbox] execlp g++");
+        execlp(compiler, compiler, temp_source, "-o", TEMP_BINARY, (char *)NULL);
+        perror("[Sandbox] execlp compiler");
         _exit(1);
     }
 

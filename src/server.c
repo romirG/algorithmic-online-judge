@@ -194,7 +194,8 @@ void *client_handler(void *arg)
             pthread_mutex_lock(&evaluation_mutex);
             server_log("evaluation_mutex LOCKED by user %d", user_id);
 
-            int verdict = evaluate_submission(req.payload, req.problem_id);
+            int verdict = evaluate_submission(req.payload, req.problem_id,
+                                                  req.file_ext);
 
             server_log("evaluation_mutex UNLOCKED by user %d", user_id);
             pthread_mutex_unlock(&evaluation_mutex);

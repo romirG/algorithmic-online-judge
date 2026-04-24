@@ -9,6 +9,7 @@
  * evaluate_submission()
  *
  * Compiles and runs source_code for the given problem_id.
+ * file_ext: ".c" → uses gcc, ".cpp" → uses g++
  * Reads test input from  data/testcases/<problem_id>/input.txt
  * Reads expected output from data/testcases/<problem_id>/expected.txt
  *
@@ -16,6 +17,7 @@
  *
  * Returns: VERDICT_AC (1), VERDICT_WA (0), VERDICT_CE (-1), VERDICT_TLE (-2)
  */
-int evaluate_submission(const char *source_code, int problem_id);
+int evaluate_submission(const char *source_code, int problem_id,
+                        const char *file_ext);
 
 #endif /* SANDBOX_H */

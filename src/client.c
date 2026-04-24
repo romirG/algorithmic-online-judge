@@ -277,9 +277,18 @@ int main(void)
                                                 sizeof(req.payload));
                     if (n < 0) break;
 
+                    /* Detect file extension for compiler selection */
+                    const char *dot = strrchr(filepath, '.');
+                    if (dot) {
+                        strncpy(req.file_ext, dot, sizeof(req.file_ext) - 1);
+                    } else {
+                        strcpy(req.file_ext, ".cpp");  /* default to C++ */
+                    }
+
                     req.action = ACTION_SUBMIT;
-                    printf("  Submitting %zd bytes to Problem %d...\n",
-                           n, req.problem_id);
+                    printf("  Submitting %zd bytes to Problem %d (%s)...\n",
+                           n, req.problem_id,
+                           strcmp(req.file_ext, ".c") == 0 ? "C" : "C++");
 
                     send(sock, &req, sizeof(req), 0);
                     recv(sock, &res, sizeof(res), 0);
