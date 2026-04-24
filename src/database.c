@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <errno.h>
+#include <pthread.h>
 
 #include "database.h"
 
@@ -235,6 +236,48 @@ int save_testcase_file(int problem_id, const char *filename,
     fclose(fp);
     printf("[DB] Saved %s for Problem %d (%zu bytes)\n",
            filename, problem_id, strlen(content));
+    return 1;
+}
+
+static pthread_mutex_t leaderboard_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* ───────────────────────────────────────────────────────────
+ * init_user_leaderboard()
+ *
+ * Adds a new user to leaderboard with 0 solved count.
+ * CONSTRAINT: fcntl() F_WRLCK on leaderboard.dat
+ * ─────────────────────────────────────────────────────────── */
+int init_user_leaderboard(int user_id)
+{
+    pthread_mutex_lock(&leaderboard_mutex);
+
+    int fd = open(LEADERBOARD_FILE, O_RDWR);
+    if (fd < 0) { 
+        perror("open leaderboard.dat"); 
+        pthread_mutex_unlock(&leaderboard_mutex);
+        return 0; 
+    }
+
+    struct flock fl = { .l_type = F_WRLCK, .l_whence = SEEK_SET,
+                        .l_start = 0, .l_len = 0 };
+
+    printf("[DB] Waiting for WRITE lock on leaderboard.dat ...\n");
+    if (fcntl(fd, F_SETLKW, &fl) < 0) {
+        perror("fcntl F_WRLCK leaderboard");
+        close(fd);
+        pthread_mutex_unlock(&leaderboard_mutex);
+        return 0;
+    }
+
+    ScoreRecord new_rec = { .user_id = user_id, .solved_count = 0 };
+    lseek(fd, 0, SEEK_END);
+    write(fd, &new_rec, sizeof(ScoreRecord));
+
+    fl.l_type = F_UNLCK;
+    fcntl(fd, F_SETLK, &fl);
+    close(fd);
+    
+    pthread_mutex_unlock(&leaderboard_mutex);
     return 1;
 }
 

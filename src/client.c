@@ -75,14 +75,37 @@ int main(void)
         }
         printf("[Client] Connected to %s:%d\n\n", SERVER_IP, PORT);
 
-        /* ── Login ── */
+        /* ── Login / Register ── */
         ClientRequest  req;
         ServerResponse res;
 
         memset(&req, 0, sizeof(req));
-        req.action = ACTION_LOGIN;
 
-        printf("──────────── LOGIN ────────────\n");
+        printf("┌───────────────────────────────┐\n");
+        printf("│  1. Login                     │\n");
+        printf("│  2. Register                  │\n");
+        printf("└───────────────────────────────┘\n");
+        printf("  Choice: ");
+
+        int init_choice;
+        if (scanf("%d", &init_choice) != 1) {
+            if (feof(stdin)) { close(sock); goto done; }
+            printf("Invalid input.\n"); flush_stdin();
+            close(sock); continue;
+        }
+        flush_stdin();
+
+        if (init_choice == 1) {
+            req.action = ACTION_LOGIN;
+            printf("──────────── LOGIN ────────────\n");
+        } else if (init_choice == 2) {
+            req.action = ACTION_REGISTER;
+            printf("────────── REGISTER ───────────\n");
+        } else {
+            printf("Invalid choice.\n\n");
+            close(sock); continue;
+        }
+
         printf("  User ID  : ");
         if (scanf("%d", &req.user_id) != 1) {
             if (feof(stdin)) { close(sock); goto done; }
@@ -104,7 +127,11 @@ int main(void)
         recv(sock, &res, sizeof(res), 0);
         printf("\n  %s\n\n", res.message);
 
-        if (res.status == STATUS_FAIL) { close(sock); continue; }
+        /* If they registered or failed login, they need to reconnect/retry */
+        if (req.action == ACTION_REGISTER || res.status == STATUS_FAIL) {
+            close(sock);
+            continue;
+        }
 
         int role = res.status;
         int running = 1;

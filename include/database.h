@@ -27,6 +27,7 @@
 #define ACTION_UPLOAD_EXPECTED  7   /* Upload expected.txt             */
 #define ACTION_VIEW_LOGS        8
 #define ACTION_HALT_SYSTEM      9   /* IPC Signal trigger (SIGUSR1)    */
+#define ACTION_REGISTER         10  /* Register a new user             */
 
 /* ─── Role Codes ─── */
 #define ROLE_ADMIN       1
@@ -78,6 +79,7 @@ typedef struct {
 
 void init_database(void);
 int  update_leaderboard(int user_id);
+int  init_user_leaderboard(int user_id);
 int  get_leaderboard(char *buffer, int buf_size);
 
 /* Problem management (fcntl write/read locks on problems.dat) */

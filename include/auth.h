@@ -26,4 +26,11 @@
  */
 int authenticate_user(int id, const char *password, int *role);
 
+/*
+ * Registers a new user with the given ID and password.
+ * Uses an exclusive WRITE lock (F_WRLCK) on users.dat to prevent duplicate IDs.
+ * Returns 1 on success, 0 on failure (e.g., ID already exists).
+ */
+int register_user(int id, const char *password, int role);
+
 #endif /* AUTH_H */

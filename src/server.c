@@ -122,13 +122,33 @@ void *client_handler(void *arg)
     memset(&res, 0, sizeof(res));
 
     ssize_t bytes = recv(client_fd, &req, sizeof(req), 0);
-    if (bytes <= 0 || req.action != ACTION_LOGIN) {
+    if (bytes <= 0 || (req.action != ACTION_LOGIN && req.action != ACTION_REGISTER)) {
         res.status = STATUS_FAIL;
         snprintf(res.message, sizeof(res.message),
-                 "Error: first request must be LOGIN.");
+                 "Error: first request must be LOGIN or REGISTER.");
         send(client_fd, &res, sizeof(res), 0);
         close(client_fd);
         return NULL;
+    }
+
+    if (req.action == ACTION_REGISTER) {
+        /* Default new users to Contestant role */
+        int role = ROLE_CONTESTANT;
+        if (register_user(req.user_id, req.password, role)) {
+            init_user_leaderboard(req.user_id);
+            res.status = STATUS_OK;
+            snprintf(res.message, sizeof(res.message),
+                     "Registration successful! Please login.");
+            server_log("User %d registered (role=Contestant)", req.user_id);
+        } else {
+            res.status = STATUS_FAIL;
+            snprintf(res.message, sizeof(res.message),
+                     "Registration failed: User ID %d already exists.", req.user_id);
+            server_log("Failed registration attempt for user %d (duplicate)", req.user_id);
+        }
+        send(client_fd, &res, sizeof(res), 0);
+        close(client_fd);
+        return NULL; /* Client must reconnect to login */
     }
 
     int role = 0;

@@ -12,6 +12,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "auth.h"
 
@@ -76,4 +77,82 @@ int authenticate_user(int id, const char *password, int *role)
 
     close(fd);
     return authenticated;
+}
+
+static pthread_mutex_t auth_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* ───────────────────────────────────────────────────────────
+ * register_user()
+ *
+ * Opens users.dat, applies an advisory WRITE lock (F_WRLCK)
+ * via fcntl(), scans to ensure the ID doesn't already exist,
+ * and if not, appends the new user record.
+ *
+ * CONSTRAINT: fcntl() F_WRLCK is held for the entire read and
+ *             write to prevent concurrent duplicate registrations.
+ *
+ * Returns: 1 on success, 0 on failure (duplicate ID).
+ * ─────────────────────────────────────────────────────────── */
+int register_user(int id, const char *password, int role)
+{
+    pthread_mutex_lock(&auth_mutex);
+
+    int fd = open(USERS_FILE, O_RDWR | O_CREAT, 0644);
+    if (fd < 0) {
+        perror("open users.dat");
+        pthread_mutex_unlock(&auth_mutex);
+        return 0;
+    }
+
+    struct flock fl;
+    memset(&fl, 0, sizeof(fl));
+    fl.l_type   = F_WRLCK;      /* Exclusive write lock */
+    fl.l_whence = SEEK_SET;
+    fl.l_start  = 0;
+    fl.l_len    = 0;             /* Lock entire file */
+
+    printf("[AUTH] Acquiring WRITE lock on users.dat for registration ...\n");
+    if (fcntl(fd, F_SETLKW, &fl) < 0) {
+        perror("fcntl F_WRLCK");
+        close(fd);
+        pthread_mutex_unlock(&auth_mutex);
+        return 0;
+    }
+    printf("[AUTH] WRITE lock acquired\n");
+
+    /* Scan to ensure ID doesn't exist */
+    User user;
+    int duplicate = 0;
+    while (read(fd, &user, sizeof(User)) == sizeof(User)) {
+        if (user.id == id) {
+            duplicate = 1;
+            break;
+        }
+    }
+
+    int success = 0;
+    if (duplicate) {
+        printf("[AUTH] Registration failed: User %d already exists.\n", id);
+    } else {
+        /* Append new user */
+        User new_user;
+        memset(&new_user, 0, sizeof(User));
+        new_user.id = id;
+        strncpy(new_user.password, password, sizeof(new_user.password) - 1);
+        new_user.role = role;
+
+        lseek(fd, 0, SEEK_END);
+        write(fd, &new_user, sizeof(User));
+        printf("[AUTH] User %d registered successfully (role=%d).\n", id, role);
+        success = 1;
+    }
+
+    /* Release lock */
+    fl.l_type = F_UNLCK;
+    fcntl(fd, F_SETLK, &fl);
+    printf("[AUTH] WRITE lock released\n");
+
+    close(fd);
+    pthread_mutex_unlock(&auth_mutex);
+    return success;
 }
