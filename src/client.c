@@ -84,6 +84,7 @@ int main(void)
         printf("┌───────────────────────────────┐\n");
         printf("│  1. Login                     │\n");
         printf("│  2. Register                  │\n");
+        printf("│  3. Exit                      │\n");
         printf("└───────────────────────────────┘\n");
         printf("  Choice: ");
 
@@ -94,6 +95,12 @@ int main(void)
             close(sock); continue;
         }
         flush_stdin();
+
+        if (init_choice == 3) {
+            printf("Exiting client...\n");
+            close(sock);
+            goto done;
+        }
 
         if (init_choice == 1) {
             req.action = ACTION_LOGIN;
