@@ -67,7 +67,13 @@ void init_database(void)
     fclose(fp);
     printf("[DB] leaderboard.dat seeded\n");
 
-    /* ── Seed problems.dat with a default problem ── */
+    /* ── Seed solved.dat ── */
+    fp = fopen(SOLVED_FILE, "wb");
+    if (!fp) { perror("fopen solved.dat"); exit(EXIT_FAILURE); }
+    fclose(fp);
+    printf("[DB] solved.dat seeded\n");
+
+    /* ── Seed problems.dat with default problems ── */
     fp = fopen(PROBLEMS_FILE, "wb");
     if (!fp) { perror("fopen problems.dat"); exit(EXIT_FAILURE); }
 
@@ -77,9 +83,16 @@ void init_database(void)
         .description = "Write a program that prints exactly: Hello World",
         .active = 1
     };
+    Problem p2 = {
+        .id = 2,
+        .title = "Two Sum",
+        .description = "Given an integer N, N integers, and target K. Print YES if two distinct numbers add up to K, else NO.",
+        .active = 1
+    };
     fwrite(&p1, sizeof(Problem), 1, fp);
+    fwrite(&p2, sizeof(Problem), 1, fp);
     fclose(fp);
-    printf("[DB] problems.dat seeded (Problem 1: Hello World)\n");
+    printf("[DB] problems.dat seeded (Problems 1 and 2)\n");
 
     /* ── Seed default test case for Problem 1 ── */
     mkdirs("data/testcases/1");
@@ -91,6 +104,17 @@ void init_database(void)
     if (fp) { fprintf(fp, "Hello World\n"); fclose(fp); }
 
     printf("[DB] Default test case seeded for Problem 1\n");
+
+    /* ── Seed default test case for Problem 2 ── */
+    mkdirs("data/testcases/2");
+
+    fp = fopen("data/testcases/2/input.txt", "w");
+    if (fp) { fprintf(fp, "5\n1 4 5 7 9\n12\n"); fclose(fp); }
+
+    fp = fopen("data/testcases/2/expected.txt", "w");
+    if (fp) { fprintf(fp, "YES\n"); fclose(fp); }
+
+    printf("[DB] Default test case seeded for Problem 2\n");
 }
 
 /* ───────────────────────────────────────────────────────────
@@ -284,10 +308,51 @@ int init_user_leaderboard(int user_id)
 /* ───────────────────────────────────────────────────────────
  * update_leaderboard()
  *
- * CONSTRAINT: fcntl() F_WRLCK on leaderboard.dat
+ * Checks if the user already solved this problem using solved.dat.
+ * If not, marks it as solved and increments their count in leaderboard.dat.
+ * CONSTRAINT: fcntl() F_WRLCK on leaderboard.dat and solved.dat
  * ─────────────────────────────────────────────────────────── */
-int update_leaderboard(int user_id)
+int update_leaderboard(int user_id, int problem_id)
 {
+    /* 1. Check solved.dat with an exclusive lock so we get atomic check-and-set */
+    int fd_sol = open(SOLVED_FILE, O_RDWR | O_CREAT, 0644);
+    if (fd_sol < 0) { perror("open solved.dat"); return 0; }
+
+    struct flock fl_sol = { .l_type = F_WRLCK, .l_whence = SEEK_SET, .l_start = 0, .l_len = 0 };
+    if (fcntl(fd_sol, F_SETLKW, &fl_sol) < 0) {
+        perror("fcntl F_WRLCK solved");
+        close(fd_sol);
+        return 0;
+    }
+
+    SolvedRecord srec;
+    int already_solved = 0;
+    while (read(fd_sol, &srec, sizeof(SolvedRecord)) == sizeof(SolvedRecord)) {
+        if (srec.user_id == user_id && srec.problem_id == problem_id) {
+            already_solved = 1;
+            break;
+        }
+    }
+
+    if (already_solved) {
+        printf("[DB] User %d already solved problem %d. No points awarded.\n", user_id, problem_id);
+        fl_sol.l_type = F_UNLCK;
+        fcntl(fd_sol, F_SETLK, &fl_sol);
+        close(fd_sol);
+        return 1;  /* True, but we just didn't increment the score */
+    }
+
+    /* Append to solved.dat */
+    srec.user_id = user_id;
+    srec.problem_id = problem_id;
+    lseek(fd_sol, 0, SEEK_END);
+    write(fd_sol, &srec, sizeof(SolvedRecord));
+
+    fl_sol.l_type = F_UNLCK;
+    fcntl(fd_sol, F_SETLK, &fl_sol);
+    close(fd_sol);
+
+    /* 2. Increment score in leaderboard.dat */
     int fd = open(LEADERBOARD_FILE, O_RDWR);
     if (fd < 0) { perror("open leaderboard.dat"); return 0; }
 

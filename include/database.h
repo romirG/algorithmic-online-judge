@@ -16,6 +16,7 @@
 #define LEADERBOARD_FILE  "data/leaderboard.dat"
 #define PROBLEMS_FILE     "data/problems.dat"
 #define TESTCASES_DIR     "data/testcases"
+#define SOLVED_FILE       "data/solved.dat"
 
 /* ─── Action Codes (ClientRequest.action) ─── */
 #define ACTION_LOGIN            1
@@ -55,6 +56,11 @@ typedef struct {
 } ScoreRecord;
 
 typedef struct {
+    int user_id;
+    int problem_id;
+} SolvedRecord;
+
+typedef struct {
     int  id;
     char title[100];
     char description[512];
@@ -78,7 +84,7 @@ typedef struct {
 /* ─── Function Prototypes ─── */
 
 void init_database(void);
-int  update_leaderboard(int user_id);
+int  update_leaderboard(int user_id, int problem_id);
 int  init_user_leaderboard(int user_id);
 int  get_leaderboard(char *buffer, int buf_size);
 

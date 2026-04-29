@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <unistd.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -41,6 +42,25 @@ static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* ─── Emergency Halt Flag (IPC via SIGUSR1) ─── */
 volatile sig_atomic_t system_halted = 0;
+
+/* ─── Graceful Shutdown Variables ─── */
+volatile sig_atomic_t server_running = 1;
+int global_server_fd = -1;
+int active_threads = 0;
+pthread_mutex_t thread_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t thread_cv = PTHREAD_COND_INITIALIZER;
+
+/*
+ * SIGINT handler — graceful shutdown.
+ */
+void sigint_handler(int sig)
+{
+    (void)sig;
+    server_running = 0;
+    if (global_server_fd >= 0) {
+        close(global_server_fd);
+    }
+}
 
 /*
  * SIGUSR1 handler — toggles system_halted.
@@ -107,9 +127,9 @@ static void get_system_logs(char *buffer, int buf_size)
 }
 
 /* ───────────────────────────────────────────────────────────
- * client_handler()  — per-connection worker thread
+ * client_handler_internal()  — per-connection worker thread core
  * ─────────────────────────────────────────────────────────── */
-void *client_handler(void *arg)
+void *client_handler_internal(void *arg)
 {
     int client_fd = *(int *)arg;
     free(arg);
@@ -223,7 +243,7 @@ void *client_handler(void *arg)
             /* Map verdict to response */
             switch (verdict) {
             case VERDICT_AC:
-                update_leaderboard(user_id);
+                update_leaderboard(user_id, req.problem_id);
                 res.status = STATUS_OK;
                 snprintf(res.message, sizeof(res.message),
                          "Verdict: ACCEPTED (AC) ✓");
@@ -422,6 +442,18 @@ void *client_handler(void *arg)
     return NULL;
 }
 
+void *client_handler(void *arg)
+{
+    void *ret = client_handler_internal(arg);
+
+    pthread_mutex_lock(&thread_mutex);
+    active_threads--;
+    pthread_cond_signal(&thread_cv);
+    pthread_mutex_unlock(&thread_mutex);
+
+    return ret;
+}
+
 /* ───────────────────────────────────────────────────────────
  * main()
  * ─────────────────────────────────────────────────────────── */
@@ -443,6 +475,18 @@ int main(void)
     }
     printf("[Server] SIGUSR1 handler installed (PID: %d)\n", getpid());
 
+    /* Install SIGINT handler for graceful shutdown */
+    struct sigaction sa_int;
+    memset(&sa_int, 0, sizeof(sa_int));
+    sa_int.sa_handler = sigint_handler;
+    sigemptyset(&sa_int.sa_mask);
+    sa_int.sa_flags = 0;
+    if (sigaction(SIGINT, &sa_int, NULL) < 0) {
+        perror("[Server] sigaction SIGINT");
+        exit(EXIT_FAILURE);
+    }
+    printf("[Server] SIGINT handler installed\n");
+
     /* Initialize database */
     init_database();
     printf("\n");
@@ -453,6 +497,8 @@ int main(void)
         perror("[Server] socket()");
         exit(EXIT_FAILURE);
     }
+    
+    global_server_fd = server_fd;
 
     int opt = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -480,7 +526,7 @@ int main(void)
            getpid());
 
     /* Accept loop */
-    while (1) {
+    while (server_running) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
 
@@ -491,6 +537,10 @@ int main(void)
                             (struct sockaddr *)&client_addr,
                             &client_len);
         if (*client_fd < 0) {
+            if (errno == EINTR || !server_running) {
+                free(client_fd);
+                break;
+            }
             perror("[Server] accept()");
             free(client_fd);
             continue;
@@ -500,16 +550,35 @@ int main(void)
                    inet_ntoa(client_addr.sin_addr),
                    ntohs(client_addr.sin_port));
 
+        pthread_mutex_lock(&thread_mutex);
+        active_threads++;
+        pthread_mutex_unlock(&thread_mutex);
+
         pthread_t tid;
         if (pthread_create(&tid, NULL, client_handler, client_fd) != 0) {
             perror("[Server] pthread_create");
             close(*client_fd);
             free(client_fd);
+            
+            pthread_mutex_lock(&thread_mutex);
+            active_threads--;
+            pthread_cond_signal(&thread_cv);
+            pthread_mutex_unlock(&thread_mutex);
             continue;
         }
         pthread_detach(tid);
     }
 
-    close(server_fd);
+    if (global_server_fd >= 0) {
+        close(global_server_fd);
+    }
+    printf("\n[Server] Shutting down, waiting for %d active threads...\n", active_threads);
+    pthread_mutex_lock(&thread_mutex);
+    while (active_threads > 0) {
+        pthread_cond_wait(&thread_cv, &thread_mutex);
+    }
+    pthread_mutex_unlock(&thread_mutex);
+    printf("[Server] All threads finished. Goodbye!\n");
+
     return 0;
 }
