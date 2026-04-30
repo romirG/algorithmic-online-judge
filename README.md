@@ -1,5 +1,10 @@
 # Algorithmic Online Judge — Project Report
 
+**Name:** Romir Gupta  
+**Roll No.:** BT2024195  
+**Course:** EGC 301P — Operating Systems Lab  
+**GitHub:** [romirG/algorithmic-online-judge](https://github.com/romirG/algorithmic-online-judge)
+
 ## Table of Contents
 1. [Problem Statement](#1-problem-statement)
 2. [OS Concepts Implemented](#2-os-concepts-implemented)
