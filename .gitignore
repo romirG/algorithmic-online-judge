@@ -4,6 +4,7 @@ server
 client
 a.out
 temp.cpp
+temp.c
 
 # Runtime data
 data/

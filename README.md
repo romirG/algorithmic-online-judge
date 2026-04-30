@@ -34,9 +34,10 @@ online_judge/
 ├── data/                # Created at runtime
 │   ├── users.dat        # Binary User records
 │   └── leaderboard.dat  # Binary ScoreRecord records
-├── test_accepted.cpp    # Sample: produces "Hello World\n" → ACCEPTED
-├── test_wrong.cpp       # Sample: wrong output → WRONG ANSWER
-├── test_tle.cpp         # Sample: infinite loop → TLE (killed by SIGXCPU)
+├── demo_assets/         # Sample solutions and test cases
+│   ├── test_accepted.cpp # Sample: produces "Hello World\n" → ACCEPTED
+│   ├── test_wrong.cpp    # Sample: wrong output → WRONG ANSWER
+│   └── test_tle.cpp      # Sample: infinite loop → TLE (killed by SIGXCPU)
 ├── Makefile
 └── README.md
 ```
@@ -75,13 +76,15 @@ make
   Login successful. Welcome, User 2 (role=Contestant).
 
 ┌─── Contestant Menu ──────────┐
-│  1. Submit Solution (.cpp)   │
-│  2. View Leaderboard         │
-│  3. Logout                   │
-└──────────────────────────────┘
-  Choice: 1
-  Enter .cpp file path: test_accepted.cpp
-  Submitting 128 bytes...
+│  1. View Available Problems   │
+│  2. Submit Solution           │
+│  3. View Leaderboard          │
+│  4. Logout                    │
+└───────────────────────────────┘
+  Choice: 2
+  Problem ID: 1
+  Path to source file (.cpp/.c): demo_assets/test_accepted.cpp
+  Submitting 128 bytes to Problem 1 (C++)...
 
   ╔═══════════════════════════╗
   ║  Verdict: ACCEPTED ✓
@@ -91,5 +94,5 @@ make
 ## Cleanup
 
 ```bash
-make clean    # Removes binaries, temp files, and data/
+make clean    # Removes binaries and temp files (preserves data/)
 ```
