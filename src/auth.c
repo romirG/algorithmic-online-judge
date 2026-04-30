@@ -1,5 +1,7 @@
 /*
- * auth.c  —  Role-based authentication and user registration.
+ * auth.c  —  Role-based authentication and user registration against users.dat.
+ * Verifies credentials under a shared read lock (login) and appends new records
+ * under an exclusive write lock (register) to prevent concurrent duplicate IDs.
  *
  * OS concepts used:
  *   - fcntl() F_RDLCK : shared read lock during login (allows concurrent logins)

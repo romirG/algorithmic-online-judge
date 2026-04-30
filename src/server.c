@@ -1,5 +1,7 @@
 /*
- * server.c  —  Multithreaded TCP server: accepts connections and dispatches requests.
+ * server.c  —  Multithreaded TCP server daemon for the Algorithmic Online Judge.
+ * Listens on a port, accepts one detached thread per client, authenticates sessions,
+ * and routes each ClientRequest to the appropriate handler (sandbox, database, auth).
  *
  * OS concepts used:
  *   - socket()/bind()/listen()/accept() : TCP server lifecycle

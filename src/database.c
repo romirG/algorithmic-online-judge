@@ -1,5 +1,7 @@
 /*
- * database.c  —  Database initialisation, problem CRUD, and leaderboard management.
+ * database.c  —  Binary flat-file database for users, problems, and the leaderboard.
+ * Initialises data files on first run, and provides locked read/write access
+ * to problems.dat, leaderboard.dat, and solved.dat for all server threads.
  *
  * OS concepts used:
  *   - fcntl() F_WRLCK : exclusive write lock on problems.dat and leaderboard.dat

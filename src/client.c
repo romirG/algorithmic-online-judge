@@ -1,5 +1,7 @@
 /*
- * client.c  —  Interactive CLI terminal that connects to the server over TCP.
+ * client.c  —  Interactive CLI terminal for the Algorithmic Online Judge.
+ * Connects to the server over TCP, authenticates (login / register / spectator),
+ * then dispatches menu actions as ClientRequest structs and prints the ServerResponse.
  *
  * OS concepts used:
  *   - socket()/connect()   : establishes a TCP connection to the server

@@ -1,10 +1,12 @@
 /*
- * sandbox.c  —  Isolated code compilation and execution engine.
+ * sandbox.c  —  Isolated code compilation and execution engine for submitted solutions.
+ * Writes source to a temp file, forks a compiler child, then forks a second child
+ * to run the binary under a CPU time limit, capturing output via pipes for comparison.
  *
  * OS concepts used:
  *   - fork()      : creates a child process so the server is never at risk
  *   - execlp()    : replaces the child image with gcc/g++ (compile) or the binary (run)
- *   - pipe()×2    : one pipe feeds stdin to the child; another captures stdout
+ *   - pipe()x2    : one pipe feeds stdin to the child; another captures stdout
  *   - dup2()      : redirects the child's standard I/O descriptors to the pipes
  *   - setrlimit() : enforces a 2-second CPU time limit (RLIMIT_CPU → SIGXCPU on exceed)
  *   - waitpid()   : parent reaps the child and inspects the exit/signal status
