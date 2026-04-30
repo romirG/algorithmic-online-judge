@@ -1,7 +1,10 @@
 /*
- * client.c  —  Interactive CLI client for the Algorithmic Online Judge.
- * Connects to the server over TCP, authenticates, then dispatches menu
- * actions as ClientRequest structs and prints the ServerResponse.
+ * client.c  —  Interactive CLI terminal that connects to the server over TCP.
+ *
+ * OS concepts used:
+ *   - socket()/connect()   : establishes a TCP connection to the server
+ *   - send()/recv()        : transmits ClientRequest and receives ServerResponse structs
+ *   - read()/fread()       : reads local source files into the payload before submission
  */
 
 #include <stdio.h>
