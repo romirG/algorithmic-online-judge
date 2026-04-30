@@ -131,41 +131,41 @@ make clean
 
 ### Initialization
 - **Server Initialization:** The server creates the listening socket and seeds the initial binary databases.
-  ![Server init](images/Server%20initialization.png)
+  ![Server init](screenshots/Server%20initialization.png)
 - **Client Initialization:** The CLI interface connects to the server and presents the login menu.
-  ![Client init](images/client%20initialization.png)
+  ![Client init](screenshots/client%20initialization.png)
 
 ### Admin Workflows
 - **Admin Login Log:**
-  ![Admin Login Log](images/server%20log%20on%20admin%20login.png)
+  ![Admin Login Log](screenshots/server%20log%20on%20admin%20login.png)
 - **Admin Menu:** 
-  ![Admin Menu](images/admin%20menu.png)
+  ![Admin Menu](screenshots/admin%20menu.png)
 - **Problem Creation:** The admin submits a new problem title and description.
-  ![Problem Creation](images/problem%20creation%20as%20admin.png)
-  ![Problem Creation Log](images/server%20log%20on%20creating%20a%20problem.png)
+  ![Problem Creation](screenshots/problem%20creation%20as%20admin.png)
+  ![Problem Creation Log](screenshots/server%20log%20on%20creating%20a%20problem.png)
 - **Emergency Halt:** The admin uses IPC (`SIGUSR1`) to halt the system.
-  ![System Halted](images/system%20halted%20(as%20admin).png)
-  ![System Halted Log](images/server%20log%20system%20halted.png)
+  ![System Halted](screenshots/system%20halted%20(as%20admin).png)
+  ![System Halted Log](screenshots/server%20log%20system%20halted.png)
 
 ### Contestant Workflows
 - **Contestant Login Log:**
-  ![Contestant Login Log](images/server%20log%20on%20contestant%20login.png)
+  ![Contestant Login Log](screenshots/server%20log%20on%20contestant%20login.png)
 - **Contestant Menu:**
-  ![Contestant Menu](images/contestant%20menu.png)
+  ![Contestant Menu](screenshots/contestant%20menu.png)
 - **Viewing Problems:** Retrieving the problem list under a shared read lock.
-  ![View Problems](images/contestant%20view%20available%20problems.png)
+  ![View Problems](screenshots/contestant%20view%20available%20problems.png)
 - **Submitting Code:** The contestant submits code, which is sent to the sandbox.
-  ![Submit Code](images/Submitting%20solution%20as%20contestant.png)
-  ![Submit Code Log](images/server%20log%20for%20problem%20submission.png)
+  ![Submit Code](screenshots/Submitting%20solution%20as%20contestant.png)
+  ![Submit Code Log](screenshots/server%20log%20for%20problem%20submission.png)
 - **Halted Rejection:** Contestant attempting to submit while the system is halted.
-  ![Halted Rejection](images/trying%20to%20submit%20when%20system%20halted%20by%20admin.png)
+  ![Halted Rejection](screenshots/trying%20to%20submit%20when%20system%20halted%20by%20admin.png)
 
 ### General Workflows
 - **Leaderboard:** Displaying the sorted scores under a shared read lock.
-  ![Leaderboard](images/leaderboard%20view.png)
-  ![Leaderboard Log](images/server%20log%20for%20viewing%20leaderboard.png)
+  ![Leaderboard](screenshots/leaderboard%20view.png)
+  ![Leaderboard Log](screenshots/server%20log%20for%20viewing%20leaderboard.png)
 - **Logout:** 
-  ![Logout Log](images/server%20log%20on%20user%20logout.png)
+  ![Logout Log](screenshots/server%20log%20on%20user%20logout.png)
 
 ## 6. Challenges Faced and Solutions
 
