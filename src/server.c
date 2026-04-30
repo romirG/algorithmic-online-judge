@@ -359,11 +359,13 @@ void *client_handler_internal(void *arg)
             }
 
             /* kill(getpid(), SIGUSR1) is an intra-process IPC signal;
-             * the handler flips system_halted atomically. */
+             * the handler flips system_halted. We check the state BEFORE
+             * sending the signal because the handler runs asynchronously. */
+            int was_halted = system_halted;
             kill(getpid(), SIGUSR1);
             res.status = STATUS_OK;
 
-            if (system_halted) {
+            if (!was_halted) {
                 snprintf(res.message, sizeof(res.message),
                     "SYSTEM HALTED. All contestant submissions suspended.\n"
                     "Send this command again to resume.\n"
@@ -495,7 +497,8 @@ int main(void)
 
         *client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
         if (*client_fd < 0) {
-            if (errno == EINTR || !server_running) { free(client_fd); break; }
+            if (!server_running) { free(client_fd); break; }
+            if (errno == EINTR) { free(client_fd); continue; }
             perror("[Server] accept()");
             free(client_fd);
             continue;
