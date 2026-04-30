@@ -45,4 +45,6 @@ client: $(SRC_DIR)/client.c
 
 clean:
 	rm -f init_db server client a.out temp.cpp temp.c
-	rm -rf data/
+	# Removed "rm -rf data/" to prevent deleting the database and your custom test case files!
+	# If you ever want to reset the database completely, run: rm -rf data/ && ./init_db
+

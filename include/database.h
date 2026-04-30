@@ -29,10 +29,12 @@
 #define ACTION_VIEW_LOGS        8
 #define ACTION_HALT_SYSTEM      9   /* IPC Signal trigger (SIGUSR1)    */
 #define ACTION_REGISTER         10  /* Register a new user             */
+#define ACTION_SPECTATOR        11  /* Enter as a Spectator (Guest)    */
 
 /* ─── Role Codes ─── */
 #define ROLE_ADMIN       1
 #define ROLE_CONTESTANT  2
+#define ROLE_SPECTATOR   3
 
 /* ─── Status / Verdict Codes ─── */
 #define STATUS_OK        1

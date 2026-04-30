@@ -142,10 +142,10 @@ void *client_handler_internal(void *arg)
     memset(&res, 0, sizeof(res));
 
     ssize_t bytes = recv(client_fd, &req, sizeof(req), 0);
-    if (bytes <= 0 || (req.action != ACTION_LOGIN && req.action != ACTION_REGISTER)) {
+    if (bytes <= 0 || (req.action != ACTION_LOGIN && req.action != ACTION_REGISTER && req.action != ACTION_SPECTATOR)) {
         res.status = STATUS_FAIL;
         snprintf(res.message, sizeof(res.message),
-                 "Error: first request must be LOGIN or REGISTER.");
+                 "Error: first request must be LOGIN, REGISTER, or SPECTATOR.");
         send(client_fd, &res, sizeof(res), 0);
         close(client_fd);
         return NULL;
@@ -172,26 +172,37 @@ void *client_handler_internal(void *arg)
     }
 
     int role = 0;
-    if (authenticate_user(req.user_id, req.password, &role)) {
+    int user_id = req.user_id;
+
+    if (req.action == ACTION_SPECTATOR) {
+        role = ROLE_SPECTATOR;
+        /* Assign randomized ID for spectator, e.g. 10000+ */
+        user_id = 10000 + (rand() % 90000);
         res.status = role;
         snprintf(res.message, sizeof(res.message),
-                 "Login successful. Welcome, User %d (%s).",
-                 req.user_id,
-                 role == ROLE_ADMIN ? "Admin" : "Contestant");
-        server_log("User %d logged in (role=%s)",
-                   req.user_id,
-                   role == ROLE_ADMIN ? "Admin" : "Contestant");
+                 "Entered as Spectator (Guest %d).", user_id);
+        server_log("Guest %d entered as Spectator", user_id);
     } else {
-        res.status = STATUS_FAIL;
-        snprintf(res.message, sizeof(res.message),
-                 "Authentication failed.");
-        server_log("Failed login attempt for user %d", req.user_id);
+        /* ACTION_LOGIN */
+        if (authenticate_user(req.user_id, req.password, &role)) {
+            res.status = role;
+            snprintf(res.message, sizeof(res.message),
+                     "Login successful. Welcome, User %d (%s).",
+                     req.user_id,
+                     role == ROLE_ADMIN ? "Admin" : "Contestant");
+            server_log("User %d logged in (role=%s)",
+                       req.user_id,
+                       role == ROLE_ADMIN ? "Admin" : "Contestant");
+        } else {
+            res.status = STATUS_FAIL;
+            snprintf(res.message, sizeof(res.message),
+                     "Authentication failed.");
+            server_log("Failed login attempt for user %d", req.user_id);
+        }
     }
 
     send(client_fd, &res, sizeof(res), 0);
     if (res.status == STATUS_FAIL) { close(client_fd); return NULL; }
-
-    int user_id = req.user_id;
 
     /* ── Phase 2: Request Loop ── */
     while (1) {
@@ -444,7 +455,21 @@ void *client_handler_internal(void *arg)
 
 void *client_handler(void *arg)
 {
+    int client_fd = *(int *)arg;
+    
+    struct sockaddr_in peer_addr;
+    socklen_t peer_len = sizeof(peer_addr);
+    char ip[64] = "Unknown";
+    int port = 0;
+
+    if (getpeername(client_fd, (struct sockaddr*)&peer_addr, &peer_len) == 0) {
+        strncpy(ip, inet_ntoa(peer_addr.sin_addr), sizeof(ip) - 1);
+        port = ntohs(peer_addr.sin_port);
+    }
+
     void *ret = client_handler_internal(arg);
+
+    server_log("Connection closed from %s:%d", ip, port);
 
     pthread_mutex_lock(&thread_mutex);
     active_threads--;

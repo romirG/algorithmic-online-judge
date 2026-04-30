@@ -84,7 +84,8 @@ int main(void)
         printf("┌───────────────────────────────┐\n");
         printf("│  1. Login                     │\n");
         printf("│  2. Register                  │\n");
-        printf("│  3. Exit                      │\n");
+        printf("│  3. Enter as Spectator        │\n");
+        printf("│  4. Exit                      │\n");
         printf("└───────────────────────────────┘\n");
         printf("  Choice: ");
 
@@ -96,7 +97,7 @@ int main(void)
         }
         flush_stdin();
 
-        if (init_choice == 3) {
+        if (init_choice == 4) {
             printf("Exiting client...\n");
             close(sock);
             goto done;
@@ -108,27 +109,32 @@ int main(void)
         } else if (init_choice == 2) {
             req.action = ACTION_REGISTER;
             printf("────────── REGISTER ───────────\n");
+        } else if (init_choice == 3) {
+            req.action = ACTION_SPECTATOR;
+            printf("────────── SPECTATOR ──────────\n");
         } else {
             printf("Invalid choice.\n\n");
             close(sock); continue;
         }
 
-        printf("  User ID  : ");
-        if (scanf("%d", &req.user_id) != 1) {
-            if (feof(stdin)) { close(sock); goto done; }
-            printf("Invalid input.\n"); flush_stdin();
-            close(sock); continue;
-        }
-        flush_stdin();
+        if (req.action != ACTION_SPECTATOR) {
+            printf("  User ID  : ");
+            if (scanf("%d", &req.user_id) != 1) {
+                if (feof(stdin)) { close(sock); goto done; }
+                printf("Invalid input.\n"); flush_stdin();
+                close(sock); continue;
+            }
+            flush_stdin();
 
-        printf("  Password : ");
-        if (scanf("%49s", req.password) != 1) {
-            if (feof(stdin)) { close(sock); goto done; }
-            printf("Invalid input.\n"); flush_stdin();
-            close(sock); continue;
+            printf("  Password : ");
+            if (scanf("%49s", req.password) != 1) {
+                if (feof(stdin)) { close(sock); goto done; }
+                printf("Invalid input.\n"); flush_stdin();
+                close(sock); continue;
+            }
+            flush_stdin();
+            printf("───────────────────────────────\n");
         }
-        flush_stdin();
-        printf("───────────────────────────────\n");
 
         send(sock, &req, sizeof(req), 0);
         recv(sock, &res, sizeof(res), 0);
@@ -257,6 +263,52 @@ int main(void)
 
                 /* ── 6. Logout ── */
                 case 6:
+                    running = 0;
+                    break;
+
+                default:
+                    printf("  Invalid choice.\n\n");
+                    break;
+                }
+
+            /* ═══════════════════════════════════════════
+             *  SPECTATOR MENU
+             * ═══════════════════════════════════════════ */
+            } else if (role == ROLE_SPECTATOR) {
+                printf("┌─── Spectator Menu ───────────┐\n");
+                printf("│  1. View Available Problems   │\n");
+                printf("│  2. View Leaderboard          │\n");
+                printf("│  3. Logout                    │\n");
+                printf("└───────────────────────────────┘\n");
+                printf("  Choice: ");
+
+                int ch;
+                if (scanf("%d", &ch) != 1) {
+                    if (feof(stdin)) { running = 0; break; }
+                    printf("Invalid.\n"); flush_stdin(); continue;
+                }
+                flush_stdin();
+
+                switch (ch) {
+
+                /* ── 1. View Problems (F_RDLCK) ── */
+                case 1:
+                    req.action = ACTION_VIEW_PROBLEMS;
+                    send(sock, &req, sizeof(req), 0);
+                    recv(sock, &res, sizeof(res), 0);
+                    printf("\n%s\n", res.message);
+                    break;
+
+                /* ── 2. View Leaderboard (F_RDLCK) ── */
+                case 2:
+                    req.action = ACTION_LEADERBOARD;
+                    send(sock, &req, sizeof(req), 0);
+                    recv(sock, &res, sizeof(res), 0);
+                    printf("\n%s\n", res.message);
+                    break;
+
+                /* ── 3. Logout ── */
+                case 3:
                     running = 0;
                     break;
 

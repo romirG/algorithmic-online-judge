@@ -22,6 +22,7 @@
 #include <sys/wait.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include <pthread.h>
 
 #include "sandbox.h"
 #include "database.h"   /* for TESTCASES_DIR, verdict macros */
@@ -59,8 +60,14 @@ int evaluate_submission(const char *source_code, int problem_id,
 {
     /* Determine compiler and temp filename from extension */
     int is_c = (file_ext && strcmp(file_ext, ".c") == 0);
-    const char *temp_source = is_c ? "temp.c" : "temp.cpp";
-    const char *compiler    = is_c ? "gcc"     : "g++";
+    const char *compiler = is_c ? "gcc" : "g++";
+
+    /* Generate unique temp files per thread to handle concurrent multi-user submissions */
+    char temp_source[64];
+    char temp_binary[64];
+    long tid = (long)pthread_self();
+    snprintf(temp_source, sizeof(temp_source), "temp_%ld%s", tid, is_c ? ".c" : ".cpp");
+    snprintf(temp_binary, sizeof(temp_binary), "a_%ld.out", tid);
 
     /* ── Step 1: Write source to temp file ── */
     FILE *fp = fopen(temp_source, "w");
@@ -84,7 +91,7 @@ int evaluate_submission(const char *source_code, int problem_id,
         /* CHILD: compiler */
         int devnull = open("/dev/null", O_WRONLY);
         if (devnull >= 0) { dup2(devnull, STDERR_FILENO); close(devnull); }
-        execlp(compiler, compiler, temp_source, "-o", TEMP_BINARY, (char *)NULL);
+        execlp(compiler, compiler, temp_source, "-o", temp_binary, (char *)NULL);
         perror("[Sandbox] execlp compiler");
         _exit(1);
     }
@@ -94,6 +101,7 @@ int evaluate_submission(const char *source_code, int problem_id,
 
     if (!WIFEXITED(comp_status) || WEXITSTATUS(comp_status) != 0) {
         printf("[Sandbox] Compilation Error\n");
+        unlink(temp_source);
         return VERDICT_CE;
     }
     printf("[Sandbox] Compilation successful\n");
@@ -166,7 +174,11 @@ int evaluate_submission(const char *source_code, int problem_id,
         if (devnull >= 0) { dup2(devnull, STDERR_FILENO); close(devnull); }
 
         /* (d) execlp: run the binary */
-        execlp("./a.out", "./a.out", (char *)NULL);
+        
+        char exec_path[128];
+        snprintf(exec_path, sizeof(exec_path), "./%s", temp_binary);
+        
+        execlp(exec_path, exec_path, (char *)NULL);
         perror("[Sandbox] execlp a.out");
         _exit(1);
     }
@@ -200,6 +212,8 @@ int evaluate_submission(const char *source_code, int problem_id,
     if (WIFSIGNALED(exec_status)) {
         printf("[Sandbox] Killed by signal %d → TLE\n",
                WTERMSIG(exec_status));
+        unlink(temp_source);
+        unlink(temp_binary);
         return VERDICT_TLE;
     }
 
@@ -209,9 +223,13 @@ int evaluate_submission(const char *source_code, int problem_id,
 
     if (strcmp(output, expected_data) == 0) {
         printf("[Sandbox] ✓ ACCEPTED\n");
+        unlink(temp_source);
+        unlink(temp_binary);
         return VERDICT_AC;
     } else {
         printf("[Sandbox] ✗ WRONG ANSWER\n");
+        unlink(temp_source);
+        unlink(temp_binary);
         return VERDICT_WA;
     }
 }

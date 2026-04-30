@@ -60,9 +60,8 @@ void init_database(void)
     fp = fopen(LEADERBOARD_FILE, "wb");
     if (!fp) { perror("fopen leaderboard.dat"); exit(EXIT_FAILURE); }
 
-    ScoreRecord s1 = { .user_id = 1, .solved_count = 0 };
+    /* Admin is purely an admin and cannot submit problems, therefore they are not on the leaderboard. */
     ScoreRecord s2 = { .user_id = 2, .solved_count = 0 };
-    fwrite(&s1, sizeof(ScoreRecord), 1, fp);
     fwrite(&s2, sizeof(ScoreRecord), 1, fp);
     fclose(fp);
     printf("[DB] leaderboard.dat seeded\n");

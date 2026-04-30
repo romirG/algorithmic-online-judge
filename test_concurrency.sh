@@ -52,18 +52,26 @@ echo ""
 
 # ── Step 4: Prepare client inputs ──
 # Client A: Login as user 2, submit, logout
-CLIENT_A_INPUT="2
+CLIENT_A_INPUT="1
+2
 pass123
+2
 1
-test_accepted.cpp
+test_accepted.c
+3
+4
 3
 "
 
 # Client B: Login as user 2 (different connection), submit, logout
-CLIENT_B_INPUT="2
+CLIENT_B_INPUT="1
+2
 pass123
+2
 1
-test_accepted.cpp
+test_accepted.c
+3
+4
 3
 "
 
@@ -127,9 +135,11 @@ echo "  Client B verdict: $([ "$B_ACCEPTED" -ge 1 ] && echo '✓ ACCEPTED' || ec
 # Check leaderboard: User 2 should have solved_count = 2
 echo ""
 echo "─── FINAL LEADERBOARD ───"
-LEADERBOARD_INPUT="2
-pass123
+LEADERBOARD_INPUT="1
 2
+pass123
+3
+4
 3
 "
 echo "$LEADERBOARD_INPUT" | ./client 2>/dev/null | grep -A5 "LEADERBOARD" || echo "(see server log)"
