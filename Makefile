@@ -35,3 +35,4 @@ client: $(SRC_DIR)/client.c
 # Note: Does NOT remove the data/ directory to preserve the persistent database.
 clean:
 	rm -f init_db server client a.out temp.cpp temp.c
+	# To reset the database completely, run: rm -rf data/ && ./init_db
