@@ -1,15 +1,13 @@
 /*
- * server.c - Main Server Daemon (v2 — Full Feature Set)
+ * server.c  —  Multithreaded TCP server: accepts connections and dispatches requests.
  *
- * OS Concepts:
- *   - TCP Sockets     : socket(), bind(), listen(), accept()
- *   - Multithreading  : pthread_create(), pthread_detach()
- *   - Mutex           : evaluation_mutex + log_mutex
- *   - IPC Signals     : SIGUSR1 handler for emergency halt
- *   - Integration     : auth, sandbox, database modules
- *
- * Admin features  : Create Problem, Upload Test Cases, View Logs, Halt
- * Contestant features: View Problems, Submit Code, View Leaderboard
+ * OS concepts used:
+ *   - socket()/bind()/listen()/accept() : TCP server lifecycle
+ *   - pthread_create()/pthread_detach() : one detached thread per client connection
+ *   - pthread_mutex_t (evaluation_mutex): serializes sandbox calls (one eval at a time)
+ *   - pthread_mutex_t (log_mutex)       : thread-safe writes to the in-memory log buffer
+ *   - SIGUSR1 signal handler            : IPC mechanism to toggle the emergency halt flag
+ *   - SIGINT  signal handler            : graceful shutdown on Ctrl-C
  */
 
 #include <stdio.h>
@@ -29,10 +27,10 @@
 #include "auth.h"
 #include "sandbox.h"
 
-/* ─── Global Mutex for evaluation (protects temp.cpp) ─── */
+/* ── Mutex: only one submission is evaluated at a time ──────────────────── */
 pthread_mutex_t evaluation_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-/* ─── System Activity Log ─── */
+/* ── Circular in-memory log buffer (protected by log_mutex) ─────────────── */
 #define MAX_LOG_ENTRIES 200
 #define LOG_ENTRY_LEN   256
 
@@ -40,41 +38,33 @@ static char   activity_log[MAX_LOG_ENTRIES][LOG_ENTRY_LEN];
 static int    log_count = 0;
 static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-/* ─── Emergency Halt Flag (IPC via SIGUSR1) ─── */
+/* ── IPC: volatile so the compiler never optimises away signal-handler writes */
 volatile sig_atomic_t system_halted = 0;
 
-/* ─── Graceful Shutdown Variables ─── */
+/* ── Graceful shutdown state ─────────────────────────────────────────────── */
 volatile sig_atomic_t server_running = 1;
 int global_server_fd = -1;
-int active_threads = 0;
+int active_threads   = 0;
 pthread_mutex_t thread_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t thread_cv = PTHREAD_COND_INITIALIZER;
+pthread_cond_t  thread_cv    = PTHREAD_COND_INITIALIZER;
 
-/*
- * SIGINT handler — graceful shutdown.
- */
+/* ── SIGINT handler: sets the flag that breaks the accept() loop ─────────── */
 void sigint_handler(int sig)
 {
     (void)sig;
     server_running = 0;
-    if (global_server_fd >= 0) {
-        close(global_server_fd);
-    }
+    if (global_server_fd >= 0)
+        close(global_server_fd);  /* unblocks accept() */
 }
 
-/*
- * SIGUSR1 handler — toggles system_halted.
- * When halted, the server rejects all new contestant submissions
- * until the admin sends the signal again.
- */
+/* ── SIGUSR1 handler: toggles the halt flag; safe because it only writes sig_atomic_t */
 void sigusr1_handler(int sig)
 {
     (void)sig;
     system_halted = !system_halted;
-    /* Safe: only writes a sig_atomic_t */
 }
 
-/* ─── Logging utility ─── */
+/* ── server_log: timestamped logging to stdout and circular buffer ────────── */
 static void server_log(const char *fmt, ...)
 {
     char entry[LOG_ENTRY_LEN];
@@ -87,18 +77,16 @@ static void server_log(const char *fmt, ...)
     vsnprintf(entry + off, sizeof(entry) - off, fmt, args);
     va_end(args);
 
-    /* Print to server terminal */
     printf("%s\n", entry);
 
-    /* Store in circular log buffer */
+    /* log_mutex makes the circular buffer safe across threads */
     pthread_mutex_lock(&log_mutex);
-    strncpy(activity_log[log_count % MAX_LOG_ENTRIES],
-            entry, LOG_ENTRY_LEN - 1);
+    strncpy(activity_log[log_count % MAX_LOG_ENTRIES], entry, LOG_ENTRY_LEN - 1);
     log_count++;
     pthread_mutex_unlock(&log_mutex);
 }
 
-/* ─── Build the log dump string for admin ─── */
+/* ── get_system_logs: serialises the buffer into a string for the admin ──── */
 static void get_system_logs(char *buffer, int buf_size)
 {
     pthread_mutex_lock(&log_mutex);
@@ -106,29 +94,20 @@ static void get_system_logs(char *buffer, int buf_size)
     offset += snprintf(buffer + offset, buf_size - offset,
                        "=== SYSTEM ACTIVITY LOG ===\n");
 
-    int start = 0;
-    int total = log_count;
-    if (total > MAX_LOG_ENTRIES) {
-        start = total - MAX_LOG_ENTRIES;
+    int start = (log_count > MAX_LOG_ENTRIES) ? log_count - MAX_LOG_ENTRIES : 0;
+    for (int i = start; i < log_count && offset < buf_size - 1; i++) {
+        offset += snprintf(buffer + offset, buf_size - offset,
+                           "  %s\n", activity_log[i % MAX_LOG_ENTRIES]);
     }
 
-    for (int i = start; i < total && offset < buf_size - 1; i++) {
-        offset += snprintf(buffer + offset, buf_size - offset,
-                           "  %s\n",
-                           activity_log[i % MAX_LOG_ENTRIES]);
-    }
+    if (log_count == 0)
+        offset += snprintf(buffer + offset, buf_size - offset, "  (no activity yet)\n");
 
-    if (total == 0) {
-        offset += snprintf(buffer + offset, buf_size - offset,
-                           "  (no activity yet)\n");
-    }
-    (void)offset;  /* suppress unused warning */
+    (void)offset;
     pthread_mutex_unlock(&log_mutex);
 }
 
-/* ───────────────────────────────────────────────────────────
- * client_handler_internal()  — per-connection worker thread core
- * ─────────────────────────────────────────────────────────── */
+/* ── client_handler_internal: handles one full client session ───────────── */
 void *client_handler_internal(void *arg)
 {
     int client_fd = *(int *)arg;
@@ -137,12 +116,14 @@ void *client_handler_internal(void *arg)
     ClientRequest  req;
     ServerResponse res;
 
-    /* ── Phase 1: Mandatory Login ── */
+    /* Phase 1: first message must be LOGIN, REGISTER, or SPECTATOR */
     memset(&req, 0, sizeof(req));
     memset(&res, 0, sizeof(res));
 
     ssize_t bytes = recv(client_fd, &req, sizeof(req), 0);
-    if (bytes <= 0 || (req.action != ACTION_LOGIN && req.action != ACTION_REGISTER && req.action != ACTION_SPECTATOR)) {
+    if (bytes <= 0 || (req.action != ACTION_LOGIN &&
+                       req.action != ACTION_REGISTER &&
+                       req.action != ACTION_SPECTATOR)) {
         res.status = STATUS_FAIL;
         snprintf(res.message, sizeof(res.message),
                  "Error: first request must be LOGIN, REGISTER, or SPECTATOR.");
@@ -152,7 +133,7 @@ void *client_handler_internal(void *arg)
     }
 
     if (req.action == ACTION_REGISTER) {
-        /* Default new users to Contestant role */
+        /* New contestants are always created with ROLE_CONTESTANT */
         int role = ROLE_CONTESTANT;
         if (register_user(req.user_id, req.password, role)) {
             init_user_leaderboard(req.user_id);
@@ -168,22 +149,22 @@ void *client_handler_internal(void *arg)
         }
         send(client_fd, &res, sizeof(res), 0);
         close(client_fd);
-        return NULL; /* Client must reconnect to login */
+        return NULL;  /* client must reconnect to log in */
     }
 
-    int role = 0;
+    int role    = 0;
     int user_id = req.user_id;
 
     if (req.action == ACTION_SPECTATOR) {
-        role = ROLE_SPECTATOR;
-        /* Assign randomized ID for spectator, e.g. 10000+ */
+        /* Spectators get no credentials; assign a random session ID for logging */
+        role    = ROLE_SPECTATOR;
         user_id = 10000 + (rand() % 90000);
         res.status = role;
         snprintf(res.message, sizeof(res.message),
                  "Entered as Spectator (Guest %d).", user_id);
         server_log("Guest %d entered as Spectator", user_id);
     } else {
-        /* ACTION_LOGIN */
+        /* ACTION_LOGIN: verify credentials with an F_RDLCK on users.dat */
         if (authenticate_user(req.user_id, req.password, &role)) {
             res.status = role;
             snprintf(res.message, sizeof(res.message),
@@ -195,8 +176,7 @@ void *client_handler_internal(void *arg)
                        role == ROLE_ADMIN ? "Admin" : "Contestant");
         } else {
             res.status = STATUS_FAIL;
-            snprintf(res.message, sizeof(res.message),
-                     "Authentication failed.");
+            snprintf(res.message, sizeof(res.message), "Authentication failed.");
             server_log("Failed login attempt for user %d", req.user_id);
         }
     }
@@ -204,7 +184,7 @@ void *client_handler_internal(void *arg)
     send(client_fd, &res, sizeof(res), 0);
     if (res.status == STATUS_FAIL) { close(client_fd); return NULL; }
 
-    /* ── Phase 2: Request Loop ── */
+    /* Phase 2: serve requests in a loop until the client disconnects */
     while (1) {
         memset(&req, 0, sizeof(req));
         memset(&res, 0, sizeof(res));
@@ -217,9 +197,7 @@ void *client_handler_internal(void *arg)
 
         switch (req.action) {
 
-        /* ────────────────────────────────────────────────
-         * CONTESTANT: Submit Solution
-         * ──────────────────────────────────────────────── */
+        /* ── CONTESTANT: Submit Solution ───────────────────────────────── */
         case ACTION_SUBMIT: {
             if (role != ROLE_CONTESTANT) {
                 res.status = STATUS_FAIL;
@@ -228,92 +206,75 @@ void *client_handler_internal(void *arg)
                 break;
             }
 
-            /* Check emergency halt */
+            /* Refuse submissions when the admin has triggered a halt */
             if (system_halted) {
                 res.status = STATUS_FAIL;
                 snprintf(res.message, sizeof(res.message),
                          "SYSTEM HALTED by Admin. Submissions suspended.");
-                server_log("User %d submission REJECTED (system halted)",
-                           user_id);
+                server_log("User %d submission REJECTED (system halted)", user_id);
                 break;
             }
 
             server_log("User %d submitted code for Problem %d (%zu bytes)",
                        user_id, req.problem_id, strlen(req.payload));
 
-            /* Lock mutex → evaluate → unlock */
+            /* evaluation_mutex ensures temp files are not mixed up between threads */
             pthread_mutex_lock(&evaluation_mutex);
             server_log("evaluation_mutex LOCKED by user %d", user_id);
 
             int verdict = evaluate_submission(req.payload, req.problem_id,
-                                                  req.file_ext);
+                                              req.file_ext);
 
             server_log("evaluation_mutex UNLOCKED by user %d", user_id);
             pthread_mutex_unlock(&evaluation_mutex);
 
-            /* Map verdict to response */
             switch (verdict) {
             case VERDICT_AC:
                 update_leaderboard(user_id, req.problem_id);
                 res.status = STATUS_OK;
-                snprintf(res.message, sizeof(res.message),
-                         "Verdict: ACCEPTED (AC) ✓");
-                server_log("User %d → Problem %d → AC",
-                           user_id, req.problem_id);
+                snprintf(res.message, sizeof(res.message), "Verdict: ACCEPTED (AC) ✓");
+                server_log("User %d → Problem %d → AC", user_id, req.problem_id);
                 break;
             case VERDICT_WA:
                 res.status = STATUS_FAIL;
-                snprintf(res.message, sizeof(res.message),
-                         "Verdict: WRONG ANSWER (WA) ✗");
-                server_log("User %d → Problem %d → WA",
-                           user_id, req.problem_id);
+                snprintf(res.message, sizeof(res.message), "Verdict: WRONG ANSWER (WA) ✗");
+                server_log("User %d → Problem %d → WA", user_id, req.problem_id);
                 break;
             case VERDICT_CE:
                 res.status = STATUS_FAIL;
-                snprintf(res.message, sizeof(res.message),
-                         "Verdict: COMPILATION ERROR (CE)");
-                server_log("User %d → Problem %d → CE",
-                           user_id, req.problem_id);
+                snprintf(res.message, sizeof(res.message), "Verdict: COMPILATION ERROR (CE)");
+                server_log("User %d → Problem %d → CE", user_id, req.problem_id);
                 break;
             case VERDICT_TLE:
                 res.status = STATUS_FAIL;
-                snprintf(res.message, sizeof(res.message),
-                         "Verdict: TIME LIMIT EXCEEDED (TLE)");
-                server_log("User %d → Problem %d → TLE",
-                           user_id, req.problem_id);
+                snprintf(res.message, sizeof(res.message), "Verdict: TIME LIMIT EXCEEDED (TLE)");
+                server_log("User %d → Problem %d → TLE", user_id, req.problem_id);
                 break;
             }
             break;
         }
 
-        /* ────────────────────────────────────────────────
-         * BOTH: View Leaderboard (with read lock)
-         * ──────────────────────────────────────────────── */
+        /* ── ALL ROLES: View Leaderboard (F_RDLCK — readers never block each other) */
         case ACTION_LEADERBOARD:
             res.status = STATUS_OK;
             get_leaderboard(res.message, sizeof(res.message));
             break;
 
-        /* ────────────────────────────────────────────────
-         * CONTESTANT: View Available Problems (read lock)
-         * ──────────────────────────────────────────────── */
+        /* ── CONTESTANT + SPECTATOR: View Available Problems (F_RDLCK) ─── */
         case ACTION_VIEW_PROBLEMS:
             res.status = STATUS_OK;
             get_problems(res.message, sizeof(res.message));
             break;
 
-        /* ────────────────────────────────────────────────
-         * ADMIN: Create / Update Problem (write lock)
-         * ──────────────────────────────────────────────── */
+        /* ── ADMIN: Create / Update Problem (F_WRLCK) ──────────────────── */
         case ACTION_CREATE_PROBLEM: {
             if (role != ROLE_ADMIN) {
                 res.status = STATUS_FAIL;
-                snprintf(res.message, sizeof(res.message),
-                         "Permission denied.");
+                snprintf(res.message, sizeof(res.message), "Permission denied.");
                 break;
             }
 
-            /* payload format: "title\ndescription" */
+            /* Payload format: "title\ndescription" */
             char title[100] = "", desc[512] = "";
             char *nl = strchr(req.payload, '\n');
             if (nl) {
@@ -329,99 +290,74 @@ void *client_handler_internal(void *arg)
             if (create_problem(req.problem_id, title, desc)) {
                 res.status = STATUS_OK;
                 snprintf(res.message, sizeof(res.message),
-                         "Problem %d created/updated: %s",
-                         req.problem_id, title);
-                server_log("Admin created Problem %d: %s",
-                           req.problem_id, title);
+                         "Problem %d created/updated: %s", req.problem_id, title);
+                server_log("Admin created Problem %d: %s", req.problem_id, title);
             } else {
                 res.status = STATUS_FAIL;
-                snprintf(res.message, sizeof(res.message),
-                         "Failed to create problem.");
+                snprintf(res.message, sizeof(res.message), "Failed to create problem.");
             }
             break;
         }
 
-        /* ────────────────────────────────────────────────
-         * ADMIN: Upload input.txt for a problem
-         * ──────────────────────────────────────────────── */
+        /* ── ADMIN: Upload input.txt for a problem ──────────────────────── */
         case ACTION_UPLOAD_INPUT: {
             if (role != ROLE_ADMIN) {
                 res.status = STATUS_FAIL;
-                snprintf(res.message, sizeof(res.message),
-                         "Permission denied.");
+                snprintf(res.message, sizeof(res.message), "Permission denied.");
                 break;
             }
-            if (save_testcase_file(req.problem_id, "input.txt",
-                                   req.payload)) {
+            if (save_testcase_file(req.problem_id, "input.txt", req.payload)) {
                 res.status = STATUS_OK;
                 snprintf(res.message, sizeof(res.message),
-                         "input.txt uploaded for Problem %d.",
-                         req.problem_id);
-                server_log("Admin uploaded input.txt for Problem %d",
-                           req.problem_id);
+                         "input.txt uploaded for Problem %d.", req.problem_id);
+                server_log("Admin uploaded input.txt for Problem %d", req.problem_id);
             } else {
                 res.status = STATUS_FAIL;
-                snprintf(res.message, sizeof(res.message),
-                         "Failed to save input.txt.");
+                snprintf(res.message, sizeof(res.message), "Failed to save input.txt.");
             }
             break;
         }
 
-        /* ────────────────────────────────────────────────
-         * ADMIN: Upload expected.txt for a problem
-         * ──────────────────────────────────────────────── */
+        /* ── ADMIN: Upload expected.txt for a problem ───────────────────── */
         case ACTION_UPLOAD_EXPECTED: {
             if (role != ROLE_ADMIN) {
                 res.status = STATUS_FAIL;
-                snprintf(res.message, sizeof(res.message),
-                         "Permission denied.");
+                snprintf(res.message, sizeof(res.message), "Permission denied.");
                 break;
             }
-            if (save_testcase_file(req.problem_id, "expected.txt",
-                                   req.payload)) {
+            if (save_testcase_file(req.problem_id, "expected.txt", req.payload)) {
                 res.status = STATUS_OK;
                 snprintf(res.message, sizeof(res.message),
-                         "expected.txt uploaded for Problem %d.",
-                         req.problem_id);
-                server_log("Admin uploaded expected.txt for Problem %d",
-                           req.problem_id);
+                         "expected.txt uploaded for Problem %d.", req.problem_id);
+                server_log("Admin uploaded expected.txt for Problem %d", req.problem_id);
             } else {
                 res.status = STATUS_FAIL;
-                snprintf(res.message, sizeof(res.message),
-                         "Failed to save expected.txt.");
+                snprintf(res.message, sizeof(res.message), "Failed to save expected.txt.");
             }
             break;
         }
 
-        /* ────────────────────────────────────────────────
-         * ADMIN: View System Logs
-         * ──────────────────────────────────────────────── */
+        /* ── ADMIN: Dump activity log ────────────────────────────────────── */
         case ACTION_VIEW_LOGS:
             if (role != ROLE_ADMIN) {
                 res.status = STATUS_FAIL;
-                snprintf(res.message, sizeof(res.message),
-                         "Permission denied.");
+                snprintf(res.message, sizeof(res.message), "Permission denied.");
                 break;
             }
             res.status = STATUS_OK;
             get_system_logs(res.message, sizeof(res.message));
             break;
 
-        /* ────────────────────────────────────────────────
-         * ADMIN: Emergency System Halt (IPC — SIGUSR1)
-         * ──────────────────────────────────────────────── */
+        /* ── ADMIN: Toggle emergency halt via SIGUSR1 (IPC) ─────────────── */
         case ACTION_HALT_SYSTEM:
             if (role != ROLE_ADMIN) {
                 res.status = STATUS_FAIL;
-                snprintf(res.message, sizeof(res.message),
-                         "Permission denied.");
+                snprintf(res.message, sizeof(res.message), "Permission denied.");
                 break;
             }
 
-            /*
-             * IPC Signal Trigger: send SIGUSR1 to self.
-             * The signal handler toggles system_halted.
-             */
+            /* kill(getpid(), SIGUSR1) is an intra-process IPC signal;
+             * the handler flips system_halted atomically. */
             kill(getpid(), SIGUSR1);
             res.status = STATUS_OK;
 
@@ -441,8 +377,7 @@ void *client_handler_internal(void *arg)
 
         default:
             res.status = STATUS_FAIL;
-            snprintf(res.message, sizeof(res.message),
-                     "Unknown action: %d", req.action);
+            snprintf(res.message, sizeof(res.message), "Unknown action: %d", req.action);
             break;
         }
 
@@ -453,16 +388,17 @@ void *client_handler_internal(void *arg)
     return NULL;
 }
 
+/* ── client_handler: thin wrapper that logs IP and decrements thread counter */
 void *client_handler(void *arg)
 {
     int client_fd = *(int *)arg;
-    
+
+    /* Capture peer address before handing off, for logging purposes */
     struct sockaddr_in peer_addr;
     socklen_t peer_len = sizeof(peer_addr);
     char ip[64] = "Unknown";
-    int port = 0;
-
-    if (getpeername(client_fd, (struct sockaddr*)&peer_addr, &peer_len) == 0) {
+    int  port   = 0;
+    if (getpeername(client_fd, (struct sockaddr *)&peer_addr, &peer_len) == 0) {
         strncpy(ip, inet_ntoa(peer_addr.sin_addr), sizeof(ip) - 1);
         port = ntohs(peer_addr.sin_port);
     }
@@ -471,6 +407,7 @@ void *client_handler(void *arg)
 
     server_log("Connection closed from %s:%d", ip, port);
 
+    /* Signal the shutdown path that this thread has finished */
     pthread_mutex_lock(&thread_mutex);
     active_threads--;
     pthread_cond_signal(&thread_cv);
@@ -479,16 +416,14 @@ void *client_handler(void *arg)
     return ret;
 }
 
-/* ───────────────────────────────────────────────────────────
- * main()
- * ─────────────────────────────────────────────────────────── */
+/* ── main ─────────────────────────────────────────────────────────────────── */
 int main(void)
 {
     printf("╔══════════════════════════════════════════╗\n");
     printf("║   Algorithmic Online Judge  -  Server    ║\n");
     printf("╚══════════════════════════════════════════╝\n\n");
 
-    /* Install SIGUSR1 handler for emergency halt */
+    /* Register SIGUSR1 for the admin-triggered halt IPC mechanism */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = sigusr1_handler;
@@ -500,7 +435,7 @@ int main(void)
     }
     printf("[Server] SIGUSR1 handler installed (PID: %d)\n", getpid());
 
-    /* Install SIGINT handler for graceful shutdown */
+    /* Register SIGINT so Ctrl-C shuts down cleanly */
     struct sigaction sa_int;
     memset(&sa_int, 0, sizeof(sa_int));
     sa_int.sa_handler = sigint_handler;
@@ -512,19 +447,18 @@ int main(void)
     }
     printf("[Server] SIGINT handler installed\n");
 
-    /* Initialize database */
     init_database();
     printf("\n");
 
-    /* Create TCP socket */
+    /* Create and configure the listening TCP socket */
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
         perror("[Server] socket()");
         exit(EXIT_FAILURE);
     }
-    
     global_server_fd = server_fd;
 
+    /* SO_REUSEADDR avoids "address already in use" on quick restarts */
     int opt = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
@@ -547,10 +481,9 @@ int main(void)
     }
 
     server_log("Server listening on %s:%d", SERVER_IP, PORT);
-    printf("[Server] Halt system from terminal: kill -SIGUSR1 %d\n\n",
-           getpid());
+    printf("[Server] Halt system from terminal: kill -SIGUSR1 %d\n\n", getpid());
 
-    /* Accept loop */
+    /* Accept loop: each accepted connection gets its own detached thread */
     while (server_running) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
@@ -558,14 +491,9 @@ int main(void)
         int *client_fd = malloc(sizeof(int));
         if (!client_fd) { perror("[Server] malloc"); continue; }
 
-        *client_fd = accept(server_fd,
-                            (struct sockaddr *)&client_addr,
-                            &client_len);
+        *client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
         if (*client_fd < 0) {
-            if (errno == EINTR || !server_running) {
-                free(client_fd);
-                break;
-            }
+            if (errno == EINTR || !server_running) { free(client_fd); break; }
             perror("[Server] accept()");
             free(client_fd);
             continue;
@@ -584,24 +512,23 @@ int main(void)
             perror("[Server] pthread_create");
             close(*client_fd);
             free(client_fd);
-            
             pthread_mutex_lock(&thread_mutex);
             active_threads--;
             pthread_cond_signal(&thread_cv);
             pthread_mutex_unlock(&thread_mutex);
             continue;
         }
-        pthread_detach(tid);
+        pthread_detach(tid);  /* thread cleans up its own resources on exit */
     }
 
-    if (global_server_fd >= 0) {
+    /* Graceful shutdown: wait for all threads to finish before exiting */
+    if (global_server_fd >= 0)
         close(global_server_fd);
-    }
-    printf("\n[Server] Shutting down, waiting for %d active threads...\n", active_threads);
+    printf("\n[Server] Shutting down, waiting for %d active threads...\n",
+           active_threads);
     pthread_mutex_lock(&thread_mutex);
-    while (active_threads > 0) {
+    while (active_threads > 0)
         pthread_cond_wait(&thread_cv, &thread_mutex);
-    }
     pthread_mutex_unlock(&thread_mutex);
     printf("[Server] All threads finished. Goodbye!\n");
 

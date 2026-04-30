@@ -1,19 +1,7 @@
 /*
- * client.c - CLI Terminal Client (v2 — Full Feature Set)
- *
- * Admin Menu:
- *   1. Create / Update Problem
- *   2. Upload Test Cases (input.txt + expected.txt)
- *   3. View System Logs
- *   4. Emergency System Halt / Resume
- *   5. View Leaderboard
- *   6. Logout
- *
- * Contestant Menu:
- *   1. View Available Problems
- *   2. Submit Solution (.cpp / .c)
- *   3. View Leaderboard
- *   4. Logout
+ * client.c  —  Interactive CLI client for the Algorithmic Online Judge.
+ * Connects to the server over TCP, authenticates, then dispatches menu
+ * actions as ClientRequest structs and prints the ServerResponse.
  */
 
 #include <stdio.h>
@@ -26,7 +14,7 @@
 
 #include "database.h"
 
-/* ─── Helper ─── */
+/* Discard leftover characters after scanf so the next prompt is clean */
 static void flush_stdin(void)
 {
     int c;
@@ -34,7 +22,7 @@ static void flush_stdin(void)
         ;
 }
 
-/* ─── Read an entire local file into buf; returns bytes read ─── */
+/* Read a local file into buf so it can be sent as the request payload */
 static ssize_t read_local_file(const char *path, char *buf, size_t buf_size)
 {
     FILE *fp = fopen(path, "r");
@@ -45,9 +33,7 @@ static ssize_t read_local_file(const char *path, char *buf, size_t buf_size)
     return (ssize_t)n;
 }
 
-/* ───────────────────────────────────────────────────────────
- * main()
- * ─────────────────────────────────────────────────────────── */
+/* ── main ─────────────────────────────────────────────────────────────────── */
 int main(void)
 {
     printf("╔══════════════════════════════════════════╗\n");
@@ -75,7 +61,7 @@ int main(void)
         }
         printf("[Client] Connected to %s:%d\n\n", SERVER_IP, PORT);
 
-        /* ── Login / Register ── */
+        /* Reconnect and re-authenticate after each registration or failed login */
         ClientRequest  req;
         ServerResponse res;
 
@@ -140,7 +126,7 @@ int main(void)
         recv(sock, &res, sizeof(res), 0);
         printf("\n  %s\n\n", res.message);
 
-        /* If they registered or failed login, they need to reconnect/retry */
+        /* Registration closes the connection; client loops and reconnects to log in */
         if (req.action == ACTION_REGISTER || res.status == STATUS_FAIL) {
             close(sock);
             continue;
@@ -153,9 +139,7 @@ int main(void)
             memset(&req, 0, sizeof(req));
             memset(&res, 0, sizeof(res));
 
-            /* ═══════════════════════════════════════════
-             *  ADMIN MENU
-             * ═══════════════════════════════════════════ */
+            /* ── ADMIN MENU ───────────────────────────────────────────────── */
             if (role == ROLE_ADMIN) {
                 printf("┌─── Admin / Problem Setter ───┐\n");
                 printf("│  1. Create / Update Problem   │\n");
@@ -176,7 +160,7 @@ int main(void)
 
                 switch (ch) {
 
-                /* ── 1. Create / Update Problem ── */
+                /* 1: payload is packed as "title\ndescription" for the server to split */
                 case 1: {
                     req.action = ACTION_CREATE_PROBLEM;
                     printf("  Problem ID: ");
@@ -191,7 +175,7 @@ int main(void)
                     fgets(desc, sizeof(desc), stdin);
                     desc[strcspn(desc, "\n")] = '\0';
 
-                    /* Pack as "title\ndescription" in payload */
+                    /* Pack title and description separated by \n */
                     snprintf(req.payload, sizeof(req.payload),
                              "%s\n%s", title, desc);
 
@@ -201,13 +185,13 @@ int main(void)
                     break;
                 }
 
-                /* ── 2. Upload Test Cases ── */
+                /* 2: sends input.txt then expected.txt as separate requests */
                 case 2: {
                     printf("  Problem ID: ");
                     int pid;
                     scanf("%d", &pid); flush_stdin();
 
-                    /* Upload input.txt */
+                    /* First request: upload input.txt */
                     char path[256];
                     printf("  Path to input file (input.txt): ");
                     scanf("%255s", path); flush_stdin();
@@ -221,7 +205,7 @@ int main(void)
                         printf("  %s\n", res.message);
                     }
 
-                    /* Upload expected.txt */
+                    /* Second request: upload expected.txt */
                     printf("  Path to expected output file (expected.txt): ");
                     scanf("%255s", path); flush_stdin();
 
@@ -237,7 +221,7 @@ int main(void)
                     break;
                 }
 
-                /* ── 3. View System Logs ── */
+                /* 3: server dumps its circular activity log */
                 case 3:
                     req.action = ACTION_VIEW_LOGS;
                     send(sock, &req, sizeof(req), 0);
@@ -245,7 +229,7 @@ int main(void)
                     printf("\n%s\n", res.message);
                     break;
 
-                /* ── 4. Emergency Halt / Resume ── */
+                /* 4: server sends SIGUSR1 to itself to toggle the halt flag */
                 case 4:
                     req.action = ACTION_HALT_SYSTEM;
                     send(sock, &req, sizeof(req), 0);
@@ -253,7 +237,7 @@ int main(void)
                     printf("\n  ⚠  %s\n\n", res.message);
                     break;
 
-                /* ── 5. View Leaderboard ── */
+                /* 5: leaderboard read under F_RDLCK — safe to view at any time */
                 case 5:
                     req.action = ACTION_LEADERBOARD;
                     send(sock, &req, sizeof(req), 0);
@@ -261,7 +245,7 @@ int main(void)
                     printf("\n%s\n", res.message);
                     break;
 
-                /* ── 6. Logout ── */
+                /* 6: break the inner loop; outer loop reconnects for next user */
                 case 6:
                     running = 0;
                     break;
@@ -271,9 +255,7 @@ int main(void)
                     break;
                 }
 
-            /* ═══════════════════════════════════════════
-             *  SPECTATOR MENU
-             * ═══════════════════════════════════════════ */
+            /* ── SPECTATOR MENU (read-only: F_RDLCK only, never writes) ─── */
             } else if (role == ROLE_SPECTATOR) {
                 printf("┌─── Spectator Menu ───────────┐\n");
                 printf("│  1. View Available Problems   │\n");
@@ -291,7 +273,7 @@ int main(void)
 
                 switch (ch) {
 
-                /* ── 1. View Problems (F_RDLCK) ── */
+                /* 1: view problems — F_RDLCK; spectators share the lock with other readers */
                 case 1:
                     req.action = ACTION_VIEW_PROBLEMS;
                     send(sock, &req, sizeof(req), 0);
@@ -299,7 +281,7 @@ int main(void)
                     printf("\n%s\n", res.message);
                     break;
 
-                /* ── 2. View Leaderboard (F_RDLCK) ── */
+                /* 2: view leaderboard — F_RDLCK; concurrent spectators never block each other */
                 case 2:
                     req.action = ACTION_LEADERBOARD;
                     send(sock, &req, sizeof(req), 0);
@@ -307,7 +289,7 @@ int main(void)
                     printf("\n%s\n", res.message);
                     break;
 
-                /* ── 3. Logout ── */
+                /* 3: end the session */
                 case 3:
                     running = 0;
                     break;
@@ -317,9 +299,7 @@ int main(void)
                     break;
                 }
 
-            /* ═══════════════════════════════════════════
-             *  CONTESTANT MENU
-             * ═══════════════════════════════════════════ */
+            /* ── CONTESTANT MENU ──────────────────────────────────────────── */
             } else {
                 printf("┌─── Contestant Menu ──────────┐\n");
                 printf("│  1. View Available Problems   │\n");
@@ -338,7 +318,7 @@ int main(void)
 
                 switch (ch) {
 
-                /* ── 1. View Problems (F_RDLCK) ── */
+                /* 1: view problems under F_RDLCK */
                 case 1:
                     req.action = ACTION_VIEW_PROBLEMS;
                     send(sock, &req, sizeof(req), 0);
@@ -346,7 +326,7 @@ int main(void)
                     printf("\n%s\n", res.message);
                     break;
 
-                /* ── 2. Submit Solution ── */
+                /* 2: read the local file, detect extension, send to sandbox */
                 case 2: {
                     printf("  Problem ID: ");
                     scanf("%d", &req.problem_id); flush_stdin();
@@ -363,7 +343,7 @@ int main(void)
                                                 sizeof(req.payload));
                     if (n < 0) break;
 
-                    /* Detect file extension for compiler selection */
+                    /* File extension tells the server which compiler to use */
                     const char *dot = strrchr(filepath, '.');
                     if (dot) {
                         strncpy(req.file_ext, dot, sizeof(req.file_ext) - 1);
@@ -385,7 +365,7 @@ int main(void)
                     break;
                 }
 
-                /* ── 3. View Leaderboard (F_RDLCK) ── */
+                /* 3: view leaderboard under F_RDLCK */
                 case 3:
                     req.action = ACTION_LEADERBOARD;
                     send(sock, &req, sizeof(req), 0);
@@ -393,7 +373,7 @@ int main(void)
                     printf("\n%s\n", res.message);
                     break;
 
-                /* ── 4. Logout ── */
+                /* 4: end session */
                 case 4:
                     running = 0;
                     break;

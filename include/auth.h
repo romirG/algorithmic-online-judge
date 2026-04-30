@@ -1,9 +1,7 @@
 /*
- * auth.h - Authentication Module Interface
- * Algorithmic Online Judge
- *
- * Provides role-based authentication using fcntl() advisory
- * read locks on the users.dat binary file.
+ * auth.h  —  Interface for role-based authentication and user registration.
+ * Both functions use fcntl() advisory locks on users.dat to ensure
+ * concurrent reads/writes are safely serialized.
  */
 
 #ifndef AUTH_H
@@ -12,24 +10,16 @@
 #include "database.h"
 
 /*
- * authenticate_user() - Validates credentials against users.dat.
- *
- * Constraint: Applies fcntl() F_RDLCK (advisory read lock) on
- *             users.dat for the duration of the lookup.
- *
- * Parameters:
- *   id       - User ID to authenticate
- *   password - Plaintext password to verify
- *   role     - Output parameter; set to the user's role on success
- *
- * Returns: 1 on successful authentication, 0 on failure.
+ * Verifies (id, password) against users.dat under an F_RDLCK advisory read lock.
+ * Multiple threads may authenticate concurrently because read locks are shared.
+ * Sets *role on success. Returns 1 on success, 0 on failure.
  */
 int authenticate_user(int id, const char *password, int *role);
 
 /*
- * Registers a new user with the given ID and password.
- * Uses an exclusive WRITE lock (F_WRLCK) on users.dat to prevent duplicate IDs.
- * Returns 1 on success, 0 on failure (e.g., ID already exists).
+ * Appends a new User record to users.dat under an F_WRLCK exclusive write lock.
+ * Also uses a pthread_mutex to serialize concurrent threads within the same process.
+ * Returns 1 on success, 0 if the user ID already exists (duplicate rejected).
  */
 int register_user(int id, const char *password, int role);
 

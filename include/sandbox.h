@@ -1,21 +1,15 @@
 /*
- * sandbox.h - Execution Sandbox Interface (v2)
+ * sandbox.h  —  Interface for the isolated code evaluation engine.
  */
 
 #ifndef SANDBOX_H
 #define SANDBOX_H
 
 /*
- * evaluate_submission()
- *
- * Compiles and runs source_code for the given problem_id.
- * file_ext: ".c" → uses gcc, ".cpp" → uses g++
- * Reads test input from  data/testcases/<problem_id>/input.txt
- * Reads expected output from data/testcases/<problem_id>/expected.txt
- *
- * Uses: fork(), execlp(), pipe() x2, dup2(), setrlimit(), waitpid()
- *
- * Returns: VERDICT_AC (1), VERDICT_WA (0), VERDICT_CE (-1), VERDICT_TLE (-2)
+ * Compiles and runs source_code against the stored test case for problem_id.
+ * Uses fork()+execlp() to compile (gcc/g++ chosen by file_ext), then a second
+ * fork() with pipe()+dup2()+setrlimit(RLIMIT_CPU=2s) to execute and capture output.
+ * Returns VERDICT_AC, VERDICT_WA, VERDICT_CE, or VERDICT_TLE.
  */
 int evaluate_submission(const char *source_code, int problem_id,
                         const char *file_ext);
