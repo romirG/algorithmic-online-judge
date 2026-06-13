@@ -1,22 +1,31 @@
-# Algorithmic Online Judge — Project Report
+# 🧠 Algorithmic Online Judge
 
-**Name:** Romir Gupta  
-**Roll No.:** BT2024195  
-**Course:** EGC 301P — Operating Systems Lab  
-**GitHub:** [romirG/algorithmic-online-judge](https://github.com/romirG/algorithmic-online-judge)
+> A multithreaded, client-server competitive programming judge built in POSIX C — featuring a sandboxed execution engine, role-based authentication, and real-time leaderboard.
 
-## Table of Contents
-1. [Problem Statement](#1-problem-statement)
-2. [OS Concepts Implemented](#2-os-concepts-implemented)
-3. [Architecture & Directory Structure](#3-architecture--directory-structure)
-4. [Build & Run](#4-build--run)
-5. [System Output & Screenshots](#5-system-output--screenshots)
-6. [Challenges Faced and Solutions](#6-challenges-faced-and-solutions)
+![Language](https://img.shields.io/badge/language-C-blue?style=flat-square)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20WSL-green?style=flat-square)
+![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)
 
-## 1. Problem Statement
-The objective of this project is to design and implement a multithreaded, client-server Algorithmic Online Judge using POSIX-compliant C. The system must support role-based authentication (Admin, Contestant, Spectator), concurrent client connections without blocking, safe read/write access to persistent binary databases, and a secure execution sandbox to compile and evaluate user-submitted code against hidden test cases. 
+Supports multiple concurrent clients, safe binary database access via `fcntl` advisory locks, and a `fork`+`setrlimit` sandbox that enforces CPU time limits and prevents runaway submissions from hanging the server.
 
-## 2. OS Concepts Implemented
+## ✨ Features
+
+- 🔐 **Role-based auth** — Admin, Contestant, and Spectator roles
+- ⚡ **Concurrent connections** — one detached `pthread` per client
+- 🔒 **Race-free database** — `F_RDLCK` / `F_WRLCK` file locks on all reads/writes
+- 🏖️ **Sandboxed execution** — `fork` + `pipe` + `dup2` + `setrlimit(RLIMIT_CPU)`
+- 🚦 **Verdict engine** — Accepted, Wrong Answer, Time Limit Exceeded
+- 🛑 **Emergency halt** — Admin can broadcast `SIGUSR1` to pause all submissions
+- 📊 **Live leaderboard** — sorted scores persisted to binary file
+
+## 📋 Table of Contents
+1. [OS Concepts Implemented](#1-os-concepts-implemented)
+2. [Architecture & Directory Structure](#2-architecture--directory-structure)
+3. [Build & Run](#3-build--run)
+4. [System Output & Screenshots](#4-system-output--screenshots)
+5. [Challenges Faced and Solutions](#5-challenges-faced-and-solutions)
+
+## 1. OS Concepts Implemented
 This project heavily relies on core Operating System concepts to guarantee safety, concurrency, and security.
 
 - **Multithreading (`pthread`)**
@@ -80,7 +89,7 @@ This project heavily relies on core Operating System concepts to guarantee safet
   kill(getpid(), SIGUSR1);
   ```
 
-## 3. Architecture & Directory Structure
+## 2. Architecture & Directory Structure
 
 ```
 online_judge/
@@ -112,7 +121,7 @@ online_judge/
 
 *(Note: "Spectators" can connect without credentials as randomized guests).*
 
-## 4. Build & Run
+## 3. Build & Run
 To run the system natively on a Linux or WSL environment:
 
 ```bash
@@ -132,7 +141,7 @@ make
 make clean
 ```
 
-## 5. System Output & Screenshots
+## 4. System Output & Screenshots
 
 ### Initialization
 - **Server Initialization:** The server creates the listening socket and seeds the initial binary databases.
@@ -172,7 +181,7 @@ make clean
 - **Logout:** 
   ![Logout Log](screenshots/server%20log%20on%20user%20logout.png)
 
-## 6. Challenges Faced and Solutions
+## 5. Challenges Faced and Solutions
 
 1. **Challenge: Safely Executing Untrusted User Code**
    - **Problem:** Contestants could submit code containing infinite loops, which would permanently tie up server threads and max out the host CPU.
