@@ -23,7 +23,6 @@ Supports multiple concurrent clients, safe binary database access via `fcntl` ad
 2. [Architecture & Directory Structure](#2-architecture--directory-structure)
 3. [Build & Run](#3-build--run)
 4. [System Output & Screenshots](#4-system-output--screenshots)
-5. [Challenges Faced and Solutions](#5-challenges-faced-and-solutions)
 
 ## 1. OS Concepts Implemented
 This project heavily relies on core Operating System concepts to guarantee safety, concurrency, and security.
@@ -180,17 +179,3 @@ make clean
   ![Leaderboard Log](screenshots/server%20log%20for%20viewing%20leaderboard.png)
 - **Logout:** 
   ![Logout Log](screenshots/server%20log%20on%20user%20logout.png)
-
-## 5. Challenges Faced and Solutions
-
-1. **Challenge: Safely Executing Untrusted User Code**
-   - **Problem:** Contestants could submit code containing infinite loops, which would permanently tie up server threads and max out the host CPU.
-   - **Solution:** Used `fork()` to completely isolate execution. In the child process, immediately after wiring up the pipes via `dup2()`, we apply `setrlimit(RLIMIT_CPU)` to restrict the CPU time. The OS automatically sends a `SIGXCPU` signal if the limit is exceeded. The parent server thread simply uses `waitpid()` and checks `WIFSIGNALED` to award a safe, deterministic "Time Limit Exceeded" (TLE) verdict without hanging.
-
-2. **Challenge: Preventing Database Corruption During High Traffic**
-   - **Problem:** If multiple contestants solve a problem at the exact same millisecond, they could simultaneously read and increment their score in `leaderboard.dat`, causing race conditions and lost updates.
-   - **Solution:** Implemented POSIX advisory file locking using `fcntl()`. Before reading/writing the leaderboard, the thread explicitly acquires an exclusive `F_WRLCK`. This forces concurrent threads to queue safely at the OS level until the lock is released. Conversely, `F_RDLCK` is used for non-destructive reads (like viewing problems), allowing massive concurrency.
-
-3. **Challenge: Admin Emergency Halt Synchronization**
-   - **Problem:** The system halt feature uses the `kill(getpid(), SIGUSR1)` signal to dynamically pause submissions. Initially, a race condition occurred where the client thread would check the global state *before* the asynchronous signal handler had time to flip the flag, resulting in backwards/incorrect logging ("System Resumed" when it was actually "Halted").
-   - **Solution:** Altered the thread logic to cache the state of the flag *before* emitting the signal. Because we know the signal handler acts as a strict toggle, caching the pre-signal state allowed the worker thread to perfectly predict and log the correct outcome without requiring sleep delays or complex thread synchronization primitives.
